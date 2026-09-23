@@ -119,8 +119,8 @@ $Scanner = {
                 foreach ($m in [regex]::Matches((Get-Content $vdf -Raw), '"path"\s+"([^"]+)"')) { $libs += ($m.Groups[1].Value -replace '\\\\', '\') }
             }
             foreach ($lib in ($libs | Select-Object -Unique)) {
-                foreach ($acf in Get-ChildItem (Join-Path $lib 'steamapps') -Filter 'appmanifest_*.acf') {
-                    $t = Get-Content $acf.FullName -Raw
+                foreach ($acf in Get-ChildItem -LiteralPath (Join-Path $lib 'steamapps') -Filter 'appmanifest_*.acf') {
+                    $t = Get-Content -LiteralPath $acf.FullName -Raw
                     $appid = [regex]::Match($t, '"appid"\s+"(\d+)"').Groups[1].Value
                     $name  = [regex]::Match($t, '"name"\s+"([^"]+)"').Groups[1].Value
                     $dir   = [regex]::Match($t, '"installdir"\s+"([^"]+)"').Groups[1].Value
@@ -136,7 +136,7 @@ $Scanner = {
 
     # ---- Epic Games
     try {
-        foreach ($f in Get-ChildItem 'C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests' -Filter *.item) {
+        foreach ($f in Get-ChildItem (Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests') -Filter *.item) {
             $j = Get-Content $f.FullName -Raw | ConvertFrom-Json
             if (-not $j.DisplayName -or -not $j.InstallLocation -or "$($j.LaunchExecutable)" -match 'Editor' -or $j.DisplayName -match 'Editor') { continue }
             Add-Game "epic:$($j.AppName)" $j.DisplayName 'Epic' $j.InstallLocation "com.epicgames.launcher://apps/$($j.AppName)?action=launch&silent=true" $null $null
@@ -286,7 +286,7 @@ $Engine = {
     $ShowArt    = [bool]$S.show_album_art
     $ShowApps   = [bool]$S.show_current_app
     foreach ($pair in @(@('game', $GameId), @('music', $MusicId), @('app', $AppId))) {
-        if ($pair[1] -notmatch '^\d{17,20}$') { Log "The $($pair[0]) Discord app ID isn't valid (17-20 digits). Fix it under Music & Apps > Advanced."; return }
+        if ($pair[1] -notmatch '^\d{17,20}$') { Log "The built-in $($pair[0]) Discord app ID isn't valid (17-20 digits)."; return }
     }
 
     # ---------------------------------------------------------------- Apple Music (Windows media API)
@@ -453,7 +453,7 @@ public static class RPFG {
 
     # ---------------------------------------------------------------- Discord IPC (one connection per Discord app id)
     function New-Conn($clientId, $name) { @{ Pipe = $null; ClientId = $clientId; Name = $name; Id = $null; SentUtc = [datetime]::MinValue } }
-    function Close-Discord($c) { try { if ($c.Pipe) { $c.Pipe.Dispose() } } catch {}; $c.Pipe = $null }
+    function Close-Discord($c) { try { if ($c.Pipe) { $c.Pipe.Dispose() } } catch {}; $c.Pipe = $null; $c.Id = $null }
     function Send-Frame($c, [int]$op, [string]$json) {
         $data = [Text.Encoding]::UTF8.GetBytes($json)
         $header = New-Object byte[] 8
@@ -468,7 +468,11 @@ public static class RPFG {
             $len = [BitConverter]::ToInt32($h, 4)
             if ($len -le 0) { return '' }
             $b = New-Object byte[] $len; $g = 0
-            while ($g -lt $len) { $g += $c.Pipe.Read($b, $g, $len - $g) }
+            while ($g -lt $len) {
+                $n = $c.Pipe.Read($b, $g, $len - $g)
+                if ($n -le 0) { return $null }      # pipe closed mid-frame
+                $g += $n
+            }
             [Text.Encoding]::UTF8.GetString($b)
         } catch { $null }
     }
@@ -545,7 +549,10 @@ public static class RPFG {
         if ($c.Pipe -and $c.Id) { try { Clear-Activity $c } catch {} }
         $c.Id = $null
     }
-    function Test-DiscordRunning { [bool]([System.IO.Directory]::GetFiles('\\.\pipe\') -match 'discord-ipc-') }
+    function Test-DiscordRunning {
+        try { return [bool]([System.IO.Directory]::GetFiles('\\.\pipe\') -match 'discord-ipc-') }
+        catch { return [bool](Get-Process -Name 'Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment' -ErrorAction SilentlyContinue) }
+    }
 
     Log "Presence started."
     while (-not $Sync.Stop) {
@@ -706,6 +713,20 @@ function Stop-Block($job, $sync, $wait) {
     if ($wait) { [void]$job.Handle.AsyncWaitHandle.WaitOne($wait) }
     try { $job.PS.Dispose(); $job.RS.Dispose() } catch {}
 }
+function Get-BlockErrors($job) {
+    $out = @()
+    try {
+        $out += @($job.PS.Streams.Error | ForEach-Object { "$($_.Exception.Message)" })
+        $why = $job.PS.InvocationStateInfo.Reason
+        if ($why) { $out += "$($why.Message)" }
+    } catch {}
+    $out
+}
+# Starts a library game (a URL for launcher games, otherwise the exe). Throws if Windows can't start it.
+function Start-GameProcess($g) {
+    if ("$($g.launch)" -match '^[a-z.]+://') { Start-Process $g.launch }
+    else { Start-Process -FilePath $g.launch -WorkingDirectory (Split-Path $g.launch) }
+}
 function Read-Library {
     if (-not (Test-Path $LibraryPath)) { return @() }
     try {
@@ -737,7 +758,7 @@ if ($Headless) {
         while ($true) {
             $line = $null
             while ($sync.Queue.TryDequeue([ref]$line)) { Write-Host $line }
-            if ($job.Handle.IsCompleted) { break }
+            if ($job.Handle.IsCompleted) { Get-BlockErrors $job | ForEach-Object { Write-Host "Error: $_" }; break }
             Start-Sleep -Milliseconds 300
         }
     } finally { Stop-Block $job $sync 8000 }
@@ -748,8 +769,16 @@ if ($Headless) {
 # Window
 # ===========================================================================
 $mutex = New-Object System.Threading.Mutex($false, 'Local\RichPresenceLauncher')
-if (-not $mutex.WaitOne(0)) {
-    [System.Windows.Forms.MessageBox]::Show('RichPresence is already running - check your system tray.', 'RichPresence') | Out-Null
+try { $gotMutex = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $gotMutex = $true }   # last run crashed; the mutex is ours now
+if (-not $gotMutex) {
+    # already running (e.g. in the tray): launch the requested game here - the running copy shows it on Discord
+    $g = if ($Play) { Read-Library | Where-Object { $_.id -eq $Play } | Select-Object -First 1 } else { $null }
+    if ($g -and $g.launch) {
+        try { Start-GameProcess $g }
+        catch { [System.Windows.Forms.MessageBox]::Show("Couldn't start $($g.name): $($_.Exception.Message)", 'RichPresence') | Out-Null }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show('RichPresence is already running - check your system tray.', 'RichPresence') | Out-Null
+    }
     exit
 }
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -761,6 +790,7 @@ $script:Library = @(Read-Library)
 $script:Tiles = @{}
 $script:reallyQuit = $false
 $script:PendingPlay = $Play
+$script:ScannedOnce = $false
 
 $SelfPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
 $IsExe    = $SelfPath -like '*.exe' -and $SelfPath -notmatch 'powershell|pwsh'
@@ -933,8 +963,7 @@ function Start-Scan {
 function Play-Game($g) {
     if (-not $g.launch) { return }
     try {
-        if ("$($g.launch)" -match '^[a-z.]+://') { Start-Process $g.launch }
-        else { Start-Process -FilePath $g.launch -WorkingDirectory (Split-Path $g.launch) }
+        Start-GameProcess $g
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Couldn't start $($g.name): $($_.Exception.Message)`n`nSome games need to be started as administrator - try running RichPresence as administrator.", 'RichPresence') | Out-Null
         return
@@ -998,7 +1027,7 @@ function Add-Tile($g) {
 
     $cm = New-Object System.Windows.Forms.ContextMenuStrip
     $mi1 = $cm.Items.Add('Create desktop shortcut'); $mi1.Tag = $g; $mi1.add_Click({ New-Shortcut $this.Tag })
-    $mi2 = $cm.Items.Add('Open install folder');     $mi2.Tag = $g; $mi2.add_Click({ Start-Process explorer.exe $this.Tag.install })
+    $mi2 = $cm.Items.Add('Open install folder');     $mi2.Tag = $g; $mi2.add_Click({ Start-Process explorer.exe "`"$($this.Tag.install)`"" })
     if ($g.store -eq 'Added') {
         $mi3 = $cm.Items.Add('Remove from list'); $mi3.Tag = $g
         $mi3.add_Click({
@@ -1007,7 +1036,8 @@ function Add-Tile($g) {
             Save-Settings $Settings; Start-Scan
         })
     }
-    $tile.ContextMenuStrip = $cm; $pic.ContextMenuStrip = $cm
+    $tile.ContextMenuStrip = $cm
+    foreach ($ctl in $tile.Controls) { $ctl.ContextMenuStrip = $cm }
     $flow.Controls.Add($tile)
     $script:Tiles[$g.id] = [pscustomobject]@{ Tile = $tile; Sub = $sub; Game = $g }
 }
@@ -1019,13 +1049,13 @@ function Rebuild-Tiles {
     $q = $txtSearch.Text.Trim().ToLower()
     $shown = 0
     foreach ($g in $script:Library) {
-        if ($q -and $g.name.ToLower() -notlike "*$q*") { continue }
+        if ($q -and "$($g.name)".ToLower().IndexOf($q) -lt 0) { continue }
         Add-Tile $g; $shown++
     }
     $flow.ResumeLayout()
     $gCount.Text = "$($script:Library.Count) games found"
     $emptyLbl.Visible = ($script:Library.Count -eq 0)
-    if ($script:Library.Count -eq 0 -and $script:ScanJob -and $script:ScanJob.Handle.IsCompleted) { $emptyLbl.Text = "No games found. Use '+ Add game', or add folders in Settings." }
+    if ($script:Library.Count -eq 0 -and $script:ScannedOnce) { $emptyLbl.Text = "No games found. Use '+ Add game', or add folders in Settings." }
 }
 
 # ---- tray
@@ -1054,7 +1084,7 @@ $btnAdd.add_Click({
     $d = New-Object System.Windows.Forms.OpenFileDialog
     $d.Filter = 'Game (*.exe)|*.exe'; $d.Title = 'Pick the game''s .exe'
     if ($d.ShowDialog() -eq 'OK') {
-        $fi = Get-Item $d.FileName
+        $fi = Get-Item -LiteralPath $d.FileName
         $nm = $fi.VersionInfo.ProductName; if (-not $nm) { $nm = $fi.BaseName }
         $Settings.custom_games = @($Settings.custom_games) + @(@{ name = $nm; exe = $fi.FullName })
         Save-Settings $Settings; Start-Scan
@@ -1082,8 +1112,11 @@ $timer.add_Tick({
     $line = $null
     while ($Sync.Queue.TryDequeue([ref]$line)) { Append-Log $line }
 
-    if ($Sync.ScanDone -and $script:ScanJob) {
+    if ($script:ScanJob -and ($Sync.ScanDone -or $script:ScanJob.Handle.IsCompleted)) {
         $Sync.ScanDone = $false
+        foreach ($err in Get-BlockErrors $script:ScanJob) { Append-Log ("[{0}] Scan error: {1}" -f (Get-Date -Format 'HH:mm:ss'), $err) }
+        Stop-Block $script:ScanJob $null 2000
+        $script:ScanJob = $null; $script:ScannedOnce = $true
         $script:Library = @(Read-Library)
         $btnRescan.Text = 'Rescan'; $btnRescan.Enabled = $true
         Rebuild-Tiles; Push-GamesToEngine
@@ -1096,7 +1129,10 @@ $timer.add_Tick({
 
     if ($script:Job) {
         $statusLbl.Text = "Presence on`n$($Sync.Status)"; $statusLbl.ForeColor = $cGreen
-        if ($script:Job.Handle.IsCompleted) { Stop-Presence }
+        if ($script:Job.Handle.IsCompleted) {
+            foreach ($err in Get-BlockErrors $script:Job) { Append-Log ("[{0}] Presence stopped by an error: {1}" -f (Get-Date -Format 'HH:mm:ss'), $err) }
+            Stop-Presence
+        }
         if ($Settings.exit_when_game_closes -and $Sync.GameExited) { $script:reallyQuit = $true; $form.Close() }
     } else {
         $statusLbl.Text = 'Presence off'; $statusLbl.ForeColor = $cDim
