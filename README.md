@@ -92,7 +92,7 @@ Small unsigned tools that watch running programs and talk to Discord sometimes g
 ## Build it yourself
 
 ```powershell
-git clone https://github.com/OWNER/RichPresence.git
+git clone https://github.com/noice912/RichPresence.git
 cd RichPresence
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```

@@ -30,8 +30,7 @@ $LibraryPath  = Join-Path $DataDir 'library.json'
 $DefaultGameId  = '1552433095335215165'   # "RP 2" - card for games that have no official Discord app of their own
 $DefaultMusicId = '1552437427828818050'   # "RP 3" - Apple Music card
 $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
-$OldCiderId     = '911790844204437504'    # earlier default (Cider's app) - migrated below
-$RepoUrl      = 'https://github.com/OWNER/RichPresence'
+$RepoUrl      = 'https://github.com/noice912/RichPresence'
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -39,9 +38,6 @@ if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Fo
 # ===========================================================================
 function New-DefaultSettings {
     [ordered]@{
-        game_client_id         = $DefaultGameId
-        music_client_id        = $DefaultMusicId
-        app_client_id          = $DefaultAppId
         genshin_uid            = ''
         show_music             = $true
         show_lyrics            = $true
@@ -65,8 +61,14 @@ function Load-Settings {
         } catch {}
     }
     foreach ($k in 'disabled_games', 'extra_folders', 'custom_games') { $s[$k] = @($s[$k]) }
-    if ("$($s.app_client_id)" -eq $OldCiderId) { $s.app_client_id = $DefaultAppId }
     return $s
+}
+# The Discord app IDs are fixed in the program - they are never read from (or written to) settings.
+function Add-BuiltInIds($s) {
+    $s['game_client_id']  = $DefaultGameId
+    $s['music_client_id'] = $DefaultMusicId
+    $s['app_client_id']   = $DefaultAppId
+    $s
 }
 function Save-Settings($s) { ($s | ConvertTo-Json -Depth 5) | Set-Content -Path $SettingsPath -Encoding UTF8 }
 
@@ -726,7 +728,7 @@ if ($ScanOnly) {
 }
 
 if ($Headless) {
-    $settings = Load-Settings
+    $settings = Add-BuiltInIds (Load-Settings)
     $sync = New-Sync
     $sync.Games = New-EngineGames (Read-Library) $settings
     $job = Start-Block $Engine @($settings, $sync)
@@ -843,15 +845,7 @@ $chkMusic  = New-Check $pMusic 'Show what I''m playing on Apple Music' 110
 $chkLyrics = New-Check $pMusic 'Show the current lyric line' 138
 $chkArt    = New-Check $pMusic 'Show album art' 166
 $chkApps   = New-Check $pMusic 'Show the app I''m using when nothing else is showing' 194
-$mIdLbl = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = "Advanced - Discord app IDs. These are filled in for you; only change them if you made your own`nDiscord applications (discord.com/developers/applications)."; ForeColor = $cDim; Location = (Pt 22 246); AutoSize = $true }
-function New-IdRow($label, $y) {
-    [void](New-Ctl System.Windows.Forms.Label $pMusic @{ Text = $label; ForeColor = $cDim; Location = (Pt 24 ($y + 3)); AutoSize = $true })
-    New-Ctl System.Windows.Forms.TextBox $pMusic @{ Location = (Pt 170 $y); Size = (Sz 240 24); BackColor = $cCard; ForeColor = $cText; BorderStyle = 'FixedSingle' }
-}
-$txtGameId  = New-IdRow 'Generic game card' 290
-$txtMusicId = New-IdRow 'Music card'        320
-$txtAppId   = New-IdRow 'Current-app card'  350
-$btnMusicSave = New-Ctl System.Windows.Forms.Button $pMusic @{ Text = 'Save'; Location = (Pt 24 392); Size = (Sz 100 32) }
+$btnMusicSave = New-Ctl System.Windows.Forms.Button $pMusic @{ Text = 'Apply'; Location = (Pt 24 250); Size = (Sz 100 32) }
 Style-Button $btnMusicSave $true
 
 # ---- Settings page
@@ -875,7 +869,6 @@ $log = New-Ctl System.Windows.Forms.TextBox $pLog @{ Dock = 'Fill'; Multiline = 
 
 # ---- settings <-> UI
 function Apply-ToUi {
-    $txtGameId.Text = "$($Settings.game_client_id)"; $txtMusicId.Text = "$($Settings.music_client_id)"; $txtAppId.Text = "$($Settings.app_client_id)"
     $txtUid.Text = "$($Settings.genshin_uid)"
     $txtFolders.Text = (@($Settings.extra_folders) -join [Environment]::NewLine)
     $chkMusic.Checked = [bool]$Settings.show_music; $chkLyrics.Checked = [bool]$Settings.show_lyrics
@@ -884,9 +877,6 @@ function Apply-ToUi {
     $chkTray.Checked = [bool]$Settings.close_to_tray; $chkWin.Checked = [bool]$Settings.start_with_windows
 }
 function Read-FromUi {
-    $Settings.game_client_id  = $txtGameId.Text.Trim();  if (-not $Settings.game_client_id)  { $Settings.game_client_id  = $DefaultGameId }
-    $Settings.music_client_id = $txtMusicId.Text.Trim(); if (-not $Settings.music_client_id) { $Settings.music_client_id = $DefaultMusicId }
-    $Settings.app_client_id   = $txtAppId.Text.Trim();   if (-not $Settings.app_client_id)   { $Settings.app_client_id   = $DefaultAppId }
     $Settings.genshin_uid = $txtUid.Text.Trim()
     $Settings.extra_folders = @($txtFolders.Text -split "`r?`n" | ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ })
     $Settings.show_music = $chkMusic.Checked; $Settings.show_lyrics = $chkLyrics.Checked
@@ -918,6 +908,7 @@ function Start-Presence {
     Push-GamesToEngine
     $copy = @{}
     foreach ($k in @($Settings.Keys)) { $copy[$k] = $Settings[$k] }
+    $copy = Add-BuiltInIds $copy
     $script:Job = Start-Block $Engine @($copy, $Sync)
     $btnToggle.Text = 'Stop presence'
 }
