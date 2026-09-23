@@ -84,6 +84,34 @@ Small unsigned tools that watch running programs and talk to Discord sometimes g
 - **Network calls:** `discord.com` (the public list of known games), `enka.network` (Genshin profile, optional), `itunes.apple.com` (album art), `lrclib.net` (lyrics), `google.com/s2/favicons` (app icons). Nothing is sent to the author.
 - **Verify or build it yourself:** releases are built by GitHub Actions from this repo, so you can [build it yourself](#build-it-yourself) and compare. You can also upload the EXE to [VirusTotal](https://www.virustotal.com) and see that the few flags, if any, are generic heuristics from PS2EXE.
 
+## Verify your download (optional)
+
+Every release EXE is built by GitHub Actions from this repo and comes with a signed **build attestation**: proof of which commit and workflow produced that exact file. To check a download with the [GitHub CLI](https://cli.github.com):
+
+```powershell
+gh attestation verify RichPresence.exe --repo noice912/RichPresence
+```
+
+If it prints `Verification succeeded`, the file is the one this repo built and nobody swapped it. You can also compare its SHA-256 with `Get-FileHash RichPresence.exe`.
+
+## Privacy
+
+RichPresence has **no telemetry, no accounts and no analytics**, and nothing is ever sent to the author. It talks to your local Discord app, plus these websites, only when the matching feature is on:
+
+| Request | What is sent | When |
+|---|---|---|
+| `discord.com` | Nothing about you. It downloads Discord's public list of known games (cached for 7 days). | On a scan |
+| `itunes.apple.com` | The song title, artist and album, to find album art | Apple Music card + "Show album art" on |
+| `lrclib.net` | The song title, artist, album and length, to find lyrics | Apple Music card + "Show the current lyric line" on |
+| `enka.network` | Your Genshin UID, to read your public profile | Only if you enter a UID in Settings |
+| `google.com/s2/favicons` | The website name of a recognised app (e.g. `code.visualstudio.com`), to get its icon | "Show the app I'm using" on |
+
+Turn any of these off under **Music & Apps**, or leave the Genshin UID empty. Like any web request, the sites can see your IP address. The names of the games you play, and the title of the window you're focused on, are only sent to your own Discord app, so that it can show them on your profile.
+
+## Uninstall
+
+RichPresence is a single portable file with no installer. To remove it: untick **Start with Windows** in Settings (this deletes the startup shortcut it created), quit from the tray icon, then delete `RichPresence.exe` and the folder `%APPDATA%\RichPresence`. Any desktop shortcut you made from the app can be deleted normally.
+
 ## Troubleshooting
 
 | Problem | Fix |

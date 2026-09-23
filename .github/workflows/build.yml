@@ -7,7 +7,9 @@ on:
 
 permissions:
   contents: write
-  id-token: write        # lets the job sign in to Azure without a stored password (OIDC)
+  id-token: write          # OIDC: Azure sign-in (optional signing) and build attestations
+  attestations: write      # publish the build provenance attestation
+  artifact-metadata: write
 
 jobs:
   build:
@@ -49,6 +51,12 @@ jobs:
           Write-Host "Signature status: $($sig.Status)"
           Write-Host "Signer: $($sig.SignerCertificate.Subject)"
           if ('${{ vars.SIGNING_ACCOUNT }}' -ne '' -and $sig.Status -ne 'Valid') { throw "Signing was configured but the signature is not valid: $($sig.Status)" }
+
+      # Proof that this exact EXE was built by this repo's workflow (verify with: gh attestation verify)
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/RichPresence.exe
 
       - uses: actions/upload-artifact@v4
         with:
