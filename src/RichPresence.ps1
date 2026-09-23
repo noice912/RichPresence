@@ -29,7 +29,8 @@ $LibraryPath  = Join-Path $DataDir 'library.json'
 # so everyone can share these without overlapping. Three apps = three cards at once.
 $DefaultGameId  = '1552433095335215165'   # "RP 2" - card for games that have no official Discord app of their own
 $DefaultMusicId = '1552437427828818050'   # "RP 3" - Apple Music card
-$DefaultAppId   = '911790844204437504'    # current-app card (Cider's public app)
+$DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
+$OldCiderId     = '911790844204437504'    # earlier default (Cider's app) - migrated below
 $RepoUrl      = 'https://github.com/OWNER/RichPresence'
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
@@ -64,6 +65,7 @@ function Load-Settings {
         } catch {}
     }
     foreach ($k in 'disabled_games', 'extra_folders', 'custom_games') { $s[$k] = @($s[$k]) }
+    if ("$($s.app_client_id)" -eq $OldCiderId) { $s.app_client_id = $DefaultAppId }
     return $s
 }
 function Save-Settings($s) { ($s | ConvertTo-Json -Depth 5) | Set-Content -Path $SettingsPath -Encoding UTF8 }
