@@ -612,7 +612,9 @@ function Start-Presence {
     if ($script:Job) { return }
     Read-FromUi
     $Sync.Stop = $false; $Sync.GameExited = $false; $Sync.Status = 'Starting...'
-    $script:Job = Start-Engine $Settings.Clone() $Sync
+    $copy = @{}
+    foreach ($k in @($Settings.Keys)) { $copy[$k] = $Settings[$k] }
+    $script:Job = Start-Engine $copy $Sync
     $btnToggle.Text = 'Stop presence'
 }
 function Stop-Presence {
