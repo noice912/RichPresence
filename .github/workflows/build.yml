@@ -7,19 +7,54 @@ on:
 
 permissions:
   contents: write
+  id-token: write        # lets the job sign in to Azure without a stored password (OIDC)
 
 jobs:
   build:
     runs-on: windows-latest
+    environment: release   # the Azure federated credential trusts this environment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - name: Build RichPresence.exe
         shell: powershell
         run: ./build.ps1
+
+      # ---- Code signing (Azure Artifact Signing). Skipped until the SIGNING_* variables exist. ----
+      - name: Azure login
+        if: ${{ vars.SIGNING_ACCOUNT != '' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign RichPresence.exe
+        if: ${{ vars.SIGNING_ACCOUNT != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Show signature
+        shell: powershell
+        run: |
+          $sig = Get-AuthenticodeSignature dist\RichPresence.exe
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ('${{ vars.SIGNING_ACCOUNT }}' -ne '' -and $sig.Status -ne 'Valid') { throw "Signing was configured but the signature is not valid: $($sig.Status)" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: RichPresence
           path: dist/RichPresence.exe
+
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
