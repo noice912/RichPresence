@@ -31,7 +31,14 @@
 
 That's all. In Discord, make sure **Settings → Activity Privacy → Share your detected activity with others** is on, and use the Discord **desktop** app (the website can't show activity).
 
-> Windows may show "Windows protected your PC" because the app is new and unsigned. Click **More info → Run anyway**.
+### "RichPresence.exe isn't commonly downloaded" - is that normal?
+
+Yes. Browsers and Windows show this for any **new, unsigned** program that few people have downloaded yet. It's a reputation check, not a virus detection. Here's how to get past it:
+
+1. **In your browser** (Edge/Chrome): open the downloads list, click **`...`** next to `RichPresence.exe` → **Keep** → **Show more** → **Keep anyway**.
+2. **When you open it**, if Windows says *"Windows protected your PC"*: click **More info** → **Run anyway**.
+
+Don't want to trust a binary? Read the [source](src/RichPresence.ps1) and [build it yourself](#build-it-yourself). The EXE is built from that file by GitHub Actions, which you can see on the [Actions tab](../../actions).
 
 ## Using it
 
