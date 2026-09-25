@@ -85,7 +85,7 @@ check('writes the library file', len(S.read_library()) == len(games))
 
 # ---- process detection, including a Wine/Proton style command line
 p = subprocess.Popen([str(game_dir / 'duckquest'), '60'])
-w = subprocess.Popen(['/bin/sh', '-c', 'exec -a "Z:\\\\games\\\\Goose.exe" sleep 60'])
+w = subprocess.Popen(['/bin/bash', '-c', 'exec -a "Z:\\\\games\\\\Goose.exe" sleep 60'])
 time.sleep(0.5)
 procs = system.running_processes()
 check('sees the running game process', procs.get('duckquest') == p.pid)
