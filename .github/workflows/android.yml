@@ -31,7 +31,19 @@ jobs:
 
       - name: Build APK
         working-directory: android
-        run: bash ci.sh assembleRelease
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+            echo 'Signing with the release key'
+          else
+            echo '::warning title=signing::No release key secrets set; this APK uses a throwaway key and cannot update an earlier install.'
+          fi
+          bash ci.sh assembleRelease
 
       - name: Enable KVM for the emulator
         run: |
