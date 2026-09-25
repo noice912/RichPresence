@@ -40,6 +40,25 @@ Yes. Browsers and Windows show this for any **new, unsigned** program that few p
 
 Don't want to trust a binary? Read the [source](src/RichPresence.ps1) and [build it yourself](#build-it-yourself). The EXE is built from that file by GitHub Actions, which you can see on the [Actions tab](../../actions).
 
+## Linux
+
+Download from the [latest release](../../releases/latest):
+
+- **`RichPresence-x86_64.AppImage`** (any distro): `chmod +x RichPresence-x86_64.AppImage`, then run it.
+- **`richpresence_<version>_amd64.deb`** (Ubuntu 22.04+, Debian 12+, Mint, Pop!_OS): `sudo apt install ./richpresence_*_amd64.deb`, then open **RichPresence** from your app menu.
+
+What's different on Linux:
+
+| | |
+|---|---|
+| **Games** | Steam (native and Proton), Heroic (Epic and GOG), Lutris, `~/Games`, your own folders, and anything you add by hand. Windows games running through Proton/Wine are matched by their `.exe`. |
+| **Music** | Works with **any player** in your desktop's media controls (Spotify, browsers, Rhythmbox, Cider, ...) instead of only Apple Music. There's an option to skip browsers and video players. |
+| **App card** | Needs an X11 session. On Wayland, only apps running through XWayland can be seen. |
+| **Discord** | The regular, Flatpak and Snap Discord apps, and Vesktop, all work. The Discord website can't show activity. |
+| **Settings** | Stored in `~/.config/RichPresence`. |
+
+The tray icon needs a desktop with a system tray (KDE, Cinnamon, XFCE, or GNOME with the AppIndicator extension). Without one, closing the window quits the app.
+
 ## Using it
 
 | | |
