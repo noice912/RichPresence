@@ -32,6 +32,8 @@ def check(label, ok, detail=''):
     print(('PASS' if ok else 'FAIL') + '  ' + label + ('  ' + str(detail) if detail and not ok else ''))
     if not ok:
         bad += 1
+        print(f'::error title=test::{label} {str(detail)[:900]}'.replace('
+', ' '))
 
 
 # ---- a fake Steam library with one game, whose binary is a real ELF (a copy of /bin/sleep)
@@ -59,6 +61,15 @@ data.mkdir(parents=True)
     {'id': '222222222222222222', 'name': 'Untitled Goose Game', 'executables': [{'os': 'win32', 'name': 'goose.exe'}]},
 ]))
 
+import traceback  # noqa: E402
+
+
+def _hook(tp, v, tb):
+    print('::error title=crash::' + ' | '.join(traceback.format_exception(tp, v, tb)).replace(chr(10), ' ')[:3000])
+    sys.__excepthook__(tp, v, tb)
+
+
+sys.excepthook = _hook
 from richpresence import discord_ipc, engine as E, scanner, settings as S, system  # noqa: E402
 
 games = scanner.scan(S.load(), log=lambda m: None)
