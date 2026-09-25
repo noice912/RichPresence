@@ -1,0 +1,7 @@
+[
+{
+  "directory": "C:/Users/Josh/RichPresence/android/app/.cxx/RelWithDebInfo/5p292j71/arm64-v8a",
+  "command": "C:\\Users\\Josh\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android26 --sysroot=C:/Users/Josh/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Drichpresence_bridge_EXPORTS -IC:/Users/Josh/RichPresence/android/sdk/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -O2 -g -DNDEBUG -fPIC -std=gnu++17 -o CMakeFiles\\richpresence_bridge.dir\\bridge.cpp.o -c C:\\Users\\Josh\\RichPresence\\android\\app\\src\\sdk\\cpp\\bridge.cpp",
+  "file": "C:\\Users\\Josh\\RichPresence\\android\\app\\src\\sdk\\cpp\\bridge.cpp"
+}
+]

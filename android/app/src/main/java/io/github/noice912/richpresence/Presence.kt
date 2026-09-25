@@ -28,8 +28,3 @@ class LogOnlyPresence : Presence {
     override fun clear(kind: Card.Kind) = log("Would clear the ${kind.name.lowercase()} card")
     override fun stop() {}
 }
-
-object PresenceProvider {
-    /** Swapped for the Social SDK implementation once it is part of the build. */
-    fun create(): Presence = LogOnlyPresence()
-}

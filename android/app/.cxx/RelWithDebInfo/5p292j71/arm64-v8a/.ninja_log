@@ -1,0 +1,4 @@
+# ninja log v5
+1	8281	8120808885572111	CMakeFiles/richpresence_bridge.dir/bridge.cpp.o	7d4bce05c040046a
+8285	8457	8120808887471958	C:/Users/Josh/RichPresence/android/app/build/intermediates/cxx/RelWithDebInfo/5p292j71/obj/arm64-v8a/librichpresence_bridge.so	7567a80c861b47f9
+12	174	8120810110499992	C:/Users/Josh/RichPresence/android/app/build/intermediates/cxx/RelWithDebInfo/5p292j71/obj/arm64-v8a/librichpresence_bridge.so	3f432e32560ab647

@@ -9,3 +9,6 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/sdk/*
+!android/sdk/README.md
+android/keystore.properties

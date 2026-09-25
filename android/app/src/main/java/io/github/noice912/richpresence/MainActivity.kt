@@ -32,6 +32,8 @@ class MainActivity : Activity() {
     private lateinit var permBox: LinearLayout
     private lateinit var gamesBox: LinearLayout
     private lateinit var log: TextView
+    private lateinit var discordLbl: TextView
+    private lateinit var linkBtn: Button
     private val prefs by lazy { Prefs(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +46,17 @@ class MainActivity : Activity() {
         label("Shows the game or song you're playing on your Discord status.", 14f, dim)
 
         section("Discord")
-        label("Linking your Discord account arrives with the next update. Until then the app shows here what it would put on your status.", 13f, dim)
+        discordLbl = label("", 14f, dim)
+        linkBtn = button("Link Discord account") {
+            if (PresenceProvider.linkedName(this) != null) PresenceProvider.unlink(this) else PresenceProvider.link(this)
+            refresh()
+        }
+        if (!PresenceProvider.HAS_DISCORD) {
+            linkBtn.visibility = View.GONE
+            discordLbl.text = "This build doesn't include Discord linking, so it only shows below what it would put on your status."
+        } else {
+            PresenceProvider.connect(this)
+        }
 
         section("Permissions")
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -91,6 +103,13 @@ class MainActivity : Activity() {
         permRow("Usage access", "to see which game is open", Detect.hasUsageAccess(this), Settings.ACTION_USAGE_ACCESS_SETTINGS)
         permRow("Notification access", "to read what's playing (song, artist). Notifications themselves aren't read.",
             Detect.hasNotificationAccess(this), Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        if (PresenceProvider.HAS_DISCORD) {
+            val who = PresenceProvider.linkedName(this)
+            discordLbl.text = if (who != null) "Linked as $who. Your game or song shows on your Discord status (one at a time; a game wins over music)."
+                else "Link your Discord account so the app can set your status. Discord opens to ask you."
+            discordLbl.setTextColor(if (who != null) green else dim)
+            linkBtn.text = if (who != null) "Unlink" else "Link Discord account"
+        }
         toggle.text = if (prefs.running) "Stop" else "Start"
         status.text = if (prefs.running) "On  -  ${Bus.status}" else "Off"
         status.setTextColor(if (prefs.running) green else dim)

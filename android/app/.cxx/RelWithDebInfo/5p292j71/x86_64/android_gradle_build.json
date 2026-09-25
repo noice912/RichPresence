@@ -1,0 +1,40 @@
+{
+  "buildFiles": [
+    "C:\\Users\\Josh\\RichPresence\\android\\app\\src\\sdk\\cpp\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\Josh\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\Josh\\RichPresence\\android\\app\\.cxx\\RelWithDebInfo\\5p292j71\\x86_64",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\Josh\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\Josh\\RichPresence\\android\\app\\.cxx\\RelWithDebInfo\\5p292j71\\x86_64",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "richpresence_bridge::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "x86_64",
+      "artifactName": "richpresence_bridge",
+      "output": "C:\\Users\\Josh\\RichPresence\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\5p292j71\\obj\\x86_64\\librichpresence_bridge.so",
+      "runtimeFiles": [
+        "C:\\Users\\Josh\\RichPresence\\android\\sdk\\jni\\x86_64\\libdiscord_partner_sdk.so"
+      ]
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "C:\\Users\\Josh\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe",
+      "cppCompilerExecutable": "C:\\Users\\Josh\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <queries>
+        <package android:name="com.discord" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -38,6 +42,22 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Shows the game or song you are playing as your Discord status" />
         </service>
+
+        <!-- Discord sign-in comes back to this app through discord-<app id>:// (only when the SDK is in the build) -->
+        <activity
+            android:name="com.discord.socialsdk.AuthenticationActivity"
+            android:enabled="${hasDiscordSdk}"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            tools:ignore="MissingClass">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="discord-${discordAppId}" />
+            </intent-filter>
+        </activity>
 
         <!-- media sessions of other players (the user grants this in Settings > Notification access) -->
         <service
