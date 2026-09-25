@@ -21,7 +21,7 @@ import android.widget.TextView
 class MainActivity : Activity() {
     private val bg = Color.parseColor("#14161b")
     private val card = Color.parseColor("#1f232b")
-    private val text = Color.parseColor("#e8eaf0")
+    private val fg = Color.parseColor("#e8eaf0")
     private val dim = Color.parseColor("#8b91a1")
     private val accent = Color.parseColor("#5865f2")
     private val green = Color.parseColor("#3ba55d")
@@ -40,7 +40,7 @@ class MainActivity : Activity() {
         root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(18), dp(18), dp(18)) }
         setContentView(ScrollView(this).apply { setBackgroundColor(bg); addView(root) })
 
-        label("RichPresence", 26f, text, bold = true)
+        label("RichPresence", 26f, fg, bold = true)
         label("Shows the game or song you're playing on your Discord status.", 14f, dim)
 
         section("Discord")
@@ -100,7 +100,7 @@ class MainActivity : Activity() {
     private fun permRow(name: String, why: String, granted: Boolean, action: String) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, dp(4)) }
         permBox.addView(row)
-        row.addView(TextView(this).apply { this.text = (if (granted) "✓  " else "✗  ") + name; setTextColor(if (granted) green else text); textSize = 15f })
+        row.addView(TextView(this).apply { this.text = (if (granted) "✓  " else "✗  ") + name; setTextColor(if (granted) green else fg); textSize = 15f })
         row.addView(TextView(this).apply { this.text = why; setTextColor(dim); textSize = 12f })
         if (!granted) row.addView(Button(this).apply {
             this.text = "Allow in Settings"; setOnClickListener { startActivity(Intent(action)) }
@@ -113,7 +113,7 @@ class MainActivity : Activity() {
         if (games.isEmpty()) label("No games found yet.", 13f, dim, into = gamesBox)
         for ((pkg, name) in games) {
             val cb = CheckBox(this).apply {
-                this.text = name; setTextColor(text); isChecked = pkg !in prefs.disabledGames
+                this.text = name; setTextColor(fg); isChecked = pkg !in prefs.disabledGames
                 setOnCheckedChangeListener { _, on -> prefs.disabledGames = if (on) prefs.disabledGames - pkg else prefs.disabledGames + pkg }
             }
             gamesBox.addView(cb)
@@ -142,7 +142,7 @@ class MainActivity : Activity() {
 
     private fun section(s: String) {
         root.addView(View(this).apply { setBackgroundColor(card) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(16); bottomMargin = dp(8) })
-        label(s, 17f, text, bold = true)
+        label(s, 17f, fg, bold = true)
     }
 
     private fun button(s: String, primary: Boolean = true, onClick: () -> Unit) = Button(this).apply {
@@ -153,7 +153,7 @@ class MainActivity : Activity() {
     }
 
     private fun check(s: String, initial: Boolean, onChange: (Boolean) -> Unit) = CheckBox(this).apply {
-        text = s; setTextColor(text); isChecked = initial
+        text = s; setTextColor(fg); isChecked = initial
         setOnCheckedChangeListener { _, on -> onChange(on) }
         root.addView(this)
     }
