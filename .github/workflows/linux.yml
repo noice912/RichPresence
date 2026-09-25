@@ -1,0 +1,75 @@
+name: Build Linux
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths: ['linux/**', '.github/workflows/linux.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write          # attach the files to the release
+  id-token: write          # OIDC token for the build attestation
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04    # oldest supported glibc, so the build runs on more distros
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y xvfb x11-utils dbus-x11
+
+      - name: Tests (fake Steam library + fake Discord)
+        working-directory: linux
+        run: |
+          python -m pip install --quiet jeepney
+          python tests/test_linux.py
+
+      - name: Build AppImage and .deb
+        working-directory: linux
+        run: bash build.sh
+
+      - name: Smoke-test the built files
+        run: |
+          set -e
+          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/RichPresence-x86_64.AppImage --version
+          # open the real window on a virtual screen for a few seconds; it must not crash
+          export RICHPRESENCE_DATA=$(mktemp -d)
+          timeout 12 xvfb-run -a env APPIMAGE_EXTRACT_AND_RUN=1 ./dist/RichPresence-x86_64.AppImage > smoke.log 2>&1 || code=$?
+          cat smoke.log
+          [ "${code:-124}" = "124" ] || { echo "window exited early with $code"; exit 1; }
+          grep -qi traceback smoke.log && exit 1 || true
+          sudo apt-get install -y ./dist/richpresence_*_amd64.deb
+          richpresence --version
+
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/RichPresence-x86_64.AppImage
+            dist/richpresence_*_amd64.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RichPresence-linux
+          path: |
+            dist/RichPresence-x86_64.AppImage
+            dist/richpresence_*_amd64.deb
+            dist/SHA256SUMS-linux.txt
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/RichPresence-x86_64.AppImage
+            dist/richpresence_*_amd64.deb
+            dist/SHA256SUMS-linux.txt

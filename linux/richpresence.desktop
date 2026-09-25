@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RichPresence
+Comment=Shows the games you play on Discord
+Exec=richpresence
+Icon=richpresence
+Terminal=false
+Categories=Game;Utility;
+Keywords=discord;presence;games;steam;
