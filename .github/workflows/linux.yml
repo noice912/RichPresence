@@ -38,16 +38,20 @@ jobs:
 
       - name: Smoke-test the built files
         run: |
-          set -e
-          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/RichPresence-x86_64.AppImage --version
-          # open the real window on a virtual screen for a few seconds; it must not crash
+          fail() { echo "::error title=smoke::$1 $(tail -c 2500 "${2:-/dev/null}" | tr '\n' ' ')"; exit 1; }
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./dist/RichPresence-x86_64.AppImage --version > v.log 2>&1 || fail 'AppImage --version failed:' v.log
+          cat v.log
+          # open the real window on a virtual screen for a few seconds; it must still be running
           export RICHPRESENCE_DATA=$(mktemp -d)
-          timeout 12 xvfb-run -a env APPIMAGE_EXTRACT_AND_RUN=1 ./dist/RichPresence-x86_64.AppImage > smoke.log 2>&1 || code=$?
+          code=0
+          timeout 15 xvfb-run -a ./dist/RichPresence-x86_64.AppImage > smoke.log 2>&1 || code=$?
           cat smoke.log
-          [ "${code:-124}" = "124" ] || { echo "window exited early with $code"; exit 1; }
-          grep -qi traceback smoke.log && exit 1 || true
-          sudo apt-get install -y ./dist/richpresence_*_amd64.deb
-          richpresence --version
+          [ "$code" = "124" ] || fail "window exited early with $code:" smoke.log
+          ! grep -qi traceback smoke.log || fail 'traceback while running:' smoke.log
+          sudo apt-get install -y ./dist/richpresence_*_amd64.deb > deb.log 2>&1 || fail 'deb install failed:' deb.log
+          richpresence --version > dv.log 2>&1 || fail 'installed richpresence --version failed:' dv.log
+          cat dv.log
 
       - name: Attest build provenance
         if: startsWith(github.ref, 'refs/tags/v')
