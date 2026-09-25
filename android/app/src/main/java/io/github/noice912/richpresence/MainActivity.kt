@@ -52,7 +52,7 @@ class MainActivity : Activity() {
 
         section("Presence")
         status = label("", 14f, dim)
-        toggle = button("Start") { if (prefs.running) PresenceService.stop(this) else start(); refresh() }
+        toggle = button("Start") { if (prefs.running) PresenceService.stop(this) else start(); refresh() }.apply { contentDescription = "presence-toggle"; isAllCaps = false }
 
         section("Show")
         check("The game I'm playing", prefs.showGames) { prefs.showGames = it }

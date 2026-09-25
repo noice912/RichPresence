@@ -19,7 +19,7 @@ adb shell cat /sdcard/ui.xml > ui.xml
 grep -q '✓  Usage access' ui.xml || fail "usage access not shown as granted"
 grep -q '✓  Notification access' ui.xml || fail "notification access not shown as granted"
 # press the Start button (found by its text in the screen dump)
-B=$(grep -o 'text="Start"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' ui.xml | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' | head -1)
+B=$(grep -o 'content-desc="presence-toggle"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' ui.xml | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' | head -1)
 [ -n "$B" ] || fail "Start button not found"
 read X1 Y1 X2 Y2 <<< "$(echo "$B" | tr -c '0-9' ' ')"
 adb shell input tap $(( (X1 + X2) / 2 )) $(( (Y1 + Y2) / 2 ))
