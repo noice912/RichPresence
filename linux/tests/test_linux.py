@@ -32,8 +32,7 @@ def check(label, ok, detail=''):
     print(('PASS' if ok else 'FAIL') + '  ' + label + ('  ' + str(detail) if detail and not ok else ''))
     if not ok:
         bad += 1
-        print(f'::error title=test::{label} {str(detail)[:900]}'.replace('
-', ' '))
+        print(f'::error title=test::{label} {str(detail)[:900]}'.replace(chr(10), ' '))
 
 
 # ---- a fake Steam library with one game, whose binary is a real ELF (a copy of /bin/sleep)
