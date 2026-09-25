@@ -12,3 +12,4 @@ android/local.properties
 android/sdk/*
 !android/sdk/README.md
 android/keystore.properties
+android/app/.cxx/

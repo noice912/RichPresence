@@ -1,3 +1,0 @@
-C:/Users/Josh/RichPresence/android/app/.cxx/RelWithDebInfo/5p292j71/x86_64/CMakeFiles/richpresence_bridge.dir
-C:/Users/Josh/RichPresence/android/app/.cxx/RelWithDebInfo/5p292j71/x86_64/CMakeFiles/edit_cache.dir
-C:/Users/Josh/RichPresence/android/app/.cxx/RelWithDebInfo/5p292j71/x86_64/CMakeFiles/rebuild_cache.dir
