@@ -27,11 +27,11 @@ jobs:
 
       - name: Unit tests
         working-directory: android
-        run: gradle --no-daemon testDebugUnitTest
+        run: bash ci.sh testDebugUnitTest
 
       - name: Build APK
         working-directory: android
-        run: gradle --no-daemon assembleRelease
+        run: bash ci.sh assembleRelease
 
       - name: Enable KVM for the emulator
         run: |
