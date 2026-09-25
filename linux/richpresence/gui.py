@@ -64,6 +64,7 @@ class App:
         self._start_tray()
         if minimized and self.tray:
             self.root.withdraw()
+            self.root.after(3000, lambda: None if getattr(self.tray, 'visible', False) else self.show_window())
         self.root.after(300, self._first_show)
         self.root.after(500, self._tick)
 
@@ -427,7 +428,8 @@ class App:
         self.root.lift()
 
     def on_close(self):
-        if self.s.get('close_to_tray') and self.tray and not self.really_quit:
+        # only hide when the tray icon really showed up; otherwise there'd be no way back to the window
+        if self.s.get('close_to_tray') and self.tray and getattr(self.tray, 'visible', False) and not self.really_quit:
             self._read_from_ui()
             self.root.withdraw()
             return
