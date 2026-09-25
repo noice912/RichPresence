@@ -98,7 +98,6 @@ class PresenceService : Service() {
                 if (status != Bus.status) {
                     Bus.status = status
                     getSystemService(NotificationManager::class.java).notify(1, notification(status))
-                    Bus.say(status)
                 }
             } catch (e: Exception) {
                 Bus.say("Error: ${e.message}")
