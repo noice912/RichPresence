@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct RichPresenceApp: App {
-    @StateObject private var model = Model()
+    @StateObject private var model = Model.shared
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -48,6 +48,19 @@ struct ContentView: View {
                     Text("Apple Music")
                 } footer: {
                     Text("iOS only lets apps see Apple Music, not other players or games. It updates while RichPresence is open or was used recently.")
+                }
+
+                Section {
+                    if let g = model.game {
+                        Label("Playing \(g)", systemImage: "gamecontroller.fill").foregroundStyle(green)
+                        Button("Clear game", role: .destructive) { model.clearGame() }
+                    } else {
+                        Text("No game showing").foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Games")
+                } footer: {
+                    Text("iOS doesn't tell apps which game is open, so the Shortcuts app does it. In Shortcuts > Automation > + > App, pick a game and \"Is Opened\", choose Run Immediately, and add the action \"Show game on Discord\" with the game's name. Make a second one for \"Is Closed\" with \"Clear game on Discord\". A game replaces your music on Discord while you play.")
                 }
 
                 Section("Now playing") {

@@ -17,7 +17,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)disconnect;
 
 /// type: 0 = Playing, 2 = Listening. start/end are Unix milliseconds, 0 for none.
+/// name: what follows "Playing"/"Listening to" (Discord may keep the app name instead).
+/// display: which line the status shows: 0 = name, 1 = state, 2 = details.
 - (void)updateWithType:(NSInteger)type
+                  name:(nullable NSString *)name
+               display:(NSInteger)display
                details:(nullable NSString *)details
                  state:(nullable NSString *)state
                  start:(int64_t)start

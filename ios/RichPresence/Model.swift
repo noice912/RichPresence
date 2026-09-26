@@ -1,5 +1,7 @@
+import AVFoundation
 import Foundation
 import MediaPlayer
+import UIKit
 import Security
 
 /// Tokens go in the Keychain, not in plain settings.
@@ -36,6 +38,14 @@ struct Track: Equatable {
 
 @MainActor
 final class Model: ObservableObject {
+    /// One shared instance: the screen and the Shortcuts actions both use it.
+    static let shared = Model()
+
+    @Published var game: String?
+    private var gameSince = Date()
+    private var keepAlive: AVAudioPlayer?
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+
     @Published var linkedName: String? = UserDefaults.standard.string(forKey: "user")
     @Published var connected = false
     @Published var linking = false
@@ -53,7 +63,7 @@ final class Model: ObservableObject {
     private var lastSent: String?
     private var sentAt = Date.distantPast
 
-    init() {
+    private init() {
         let id = UInt64(Bundle.main.object(forInfoDictionaryKey: "DiscordAppId") as? String ?? "") ?? 0
         discord = DiscordBridge(appId: id)
         discord.onLog = { [weak self] m in self?.say(m) }
@@ -152,8 +162,85 @@ final class Model: ObservableObject {
         push(force: false)
     }
 
+    // ------------------------------------------------ games (from Shortcuts)
+    func showGame(_ name: String) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        if game != n { gameSince = Date(); say("Playing: \(n)") }
+        game = n
+        stayAwake(true)
+        push(force: true)
+    }
+
+    func clearGame() {
+        guard game != nil else { return }
+        say("Game closed")
+        game = nil
+        stayAwake(false)
+        push(force: true)
+    }
+
+    /// iOS pauses apps in the background, which would drop the Discord connection and the status.
+    /// While a game is showing, a silent sound (mixed with the game's own audio) keeps the app running.
+    private func stayAwake(_ on: Bool) {
+        if on {
+            if bgTask == .invalid {
+                bgTask = UIApplication.shared.beginBackgroundTask { [weak self] in
+                    MainActor.assumeIsolated { self?.endTask() }
+                }
+            }
+            guard keepAlive == nil else { return }
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+                try AVAudioSession.sharedInstance().setActive(true)
+                let p = try AVAudioPlayer(data: Self.silentWav())
+                p.numberOfLoops = -1
+                p.volume = 0
+                p.play()
+                keepAlive = p
+            } catch {
+                say("Couldn't stay running in the background: \(error.localizedDescription)")
+            }
+        } else {
+            keepAlive?.stop()
+            keepAlive = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            endTask()
+        }
+    }
+
+    private func endTask() {
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+    }
+
+    /// One second of silence as a WAV file, built in memory.
+    private static func silentWav() -> Data {
+        let rate: UInt32 = 8000
+        let bytes = rate * 2
+        var d = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        d.append(contentsOf: Array("RIFF".utf8)); u32(36 + bytes); d.append(contentsOf: Array("WAVEfmt ".utf8))
+        u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16)
+        d.append(contentsOf: Array("data".utf8)); u32(bytes); d.append(Data(count: Int(bytes)))
+        return d
+    }
+
     private func push(force: Bool) {
         guard connected else { return }
+        if let g = game {
+            let sig = "game|\(g)"
+            if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
+            lastSent = sig
+            sentAt = Date()
+            // like the Windows card: "Playing <game>"
+            discord.update(withType: 0, name: g, display: 2, details: String(g.prefix(128)), state: "on iPhone",
+                           start: Int64(gameSince.timeIntervalSince1970 * 1000), end: 0, image: nil, imageText: nil)
+            return
+        }
         guard showMusic, let t = track else {
             if lastSent != nil { discord.clear(); lastSent = nil }
             return
@@ -166,8 +253,10 @@ final class Model: ObservableObject {
         let start = now - Int64(t.position * 1000)
         let end = t.duration > 0 ? start + Int64(t.duration * 1000) : 0
         artwork(for: t) { [weak self] art in
-            self?.discord.update(withType: 2, details: String(t.title.prefix(128)),
-                                 state: t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128)),
+            // like the Windows card: "Listening to <artist>", song title on the first line
+            let artist = t.artist.isEmpty ? "Apple Music" : String(t.artist.prefix(128))
+            self?.discord.update(withType: 2, name: artist, display: 1, details: String(t.title.prefix(128)),
+                                 state: artist,
                                  start: start, end: end, image: art,
                                  imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
         }

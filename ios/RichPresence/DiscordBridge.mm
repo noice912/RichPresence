@@ -87,10 +87,13 @@ static NSString *ns(const std::string &s) { return [NSString stringWithUTF8Strin
 
 - (void)disconnect { _client->Disconnect(); }
 
-- (void)updateWithType:(NSInteger)type details:(NSString *)details state:(NSString *)state
+- (void)updateWithType:(NSInteger)type name:(NSString *)name display:(NSInteger)display details:(NSString *)details state:(NSString *)state
                  start:(int64_t)start end:(int64_t)end image:(NSString *)image imageText:(NSString *)imageText {
     discordpp::Activity a;
     a.SetType(type == 2 ? discordpp::ActivityTypes::Listening : discordpp::ActivityTypes::Playing);
+    if (name.length >= 2) a.SetName(std::string(name.UTF8String));
+    a.SetStatusDisplayType(display == 1 ? discordpp::StatusDisplayTypes::State :
+                           display == 2 ? discordpp::StatusDisplayTypes::Details : discordpp::StatusDisplayTypes::Name);
     if (details) a.SetDetails(std::string(details.UTF8String));
     if (state) a.SetState(std::string(state.UTF8String));
     if (start > 0 || end > 0) {

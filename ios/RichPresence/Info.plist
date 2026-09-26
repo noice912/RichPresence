@@ -40,6 +40,11 @@
 	</array>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>RichPresence reads the song playing in Apple Music so it can show it on your Discord status.</string>
+	<!-- keeps the app running (silently) while a game is shown, so the Discord status stays up -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchScreen</key>
