@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from . import engine as E
-from . import scanner, system
+from . import __version__, scanner, system, updater
 from . import settings as S
 
 BG, SIDE, CARD, CARD_HI, TEXT, DIM, ACCENT, GREEN, RUN_BG = (
@@ -49,6 +49,7 @@ class App:
         self.pending_play = play
         self.really_quit = False
         self.tray = None
+        self.update = {'state': '', 'latest': None, 'path': None, 'next': time.time() + 20, 'busy': False}
 
         self.root = tk.Tk()
         self.root.title('RichPresence')
@@ -146,7 +147,7 @@ class App:
                  bg=BG, fg=DIM, justify='left').pack(anchor='w', pady=(4, 14))
         self.v = {k: tk.BooleanVar() for k in ('show_music', 'show_lyrics', 'show_album_art', 'show_current_app',
                                                 'music_only', 'start_presence_on_open', 'exit_when_game_closes', 'close_to_tray', 'start_on_login',
-                                                'official_to_discord')}
+                                                'official_to_discord', 'auto_update')}
         for k, t in (('show_music', "Show what I'm listening to"), ('music_only', 'Only music apps (skip browsers and video players)'),
                      ('show_lyrics', 'Show the current lyric line'), ('show_album_art', 'Show album art'),
                      ('show_current_app', "Show the app I'm using when nothing else is showing")):
@@ -171,9 +172,16 @@ class App:
                      ('exit_when_game_closes', 'Quit RichPresence when the game I launched closes'),
                      ('close_to_tray', 'Closing the window keeps it running in the tray'),
                      ('start_on_login', 'Start when I log in'),
-                     ('official_to_discord', 'Let Discord detect official games first (keeps streaks), then show my card after 2 minutes')):
+                     ('official_to_discord', 'Let Discord detect official games first (keeps streaks), then show my card after 2 minutes'),
+                     ('auto_update', 'Install updates automatically (AppImage only; never while a game is running)')):
             self._check(st, t, self.v[k]).pack(anchor='w', pady=2)
         self._btn(st, 'Save & rescan', self._save_all, primary=True).pack(anchor='w', pady=16)
+        urow = tk.Frame(st, bg=BG)
+        urow.pack(anchor='w', pady=(0, 10))
+        self.btn_update = self._btn(urow, 'Check for updates', self._update_clicked)
+        self.btn_update.pack(side='left')
+        self.update_lbl = tk.Label(urow, text=f'Version {__version__}', bg=BG, fg=DIM)
+        self.update_lbl.pack(side='left', padx=10)
         link = tk.Label(st, text='Help & source on GitHub', bg=BG, fg=ACCENT, cursor='hand2')
         link.pack(anchor='w')
         link.bind('<Button-1>', lambda e: open_thing(S.REPO_URL))
@@ -465,7 +473,63 @@ class App:
                 self.pending_play = ''
                 self.play(g)
 
+    # ------------------------------------------------ updates
+    def _check_updates(self):
+        u = self.update
+        if u['busy']:
+            return
+        u['busy'], u['next'] = True, time.time() + 6 * 3600
+        self.update_lbl.configure(text=f'Version {__version__} - checking for updates...')
+
+        def work():
+            state, latest, path = updater.check(log=self.state.say)
+            u.update(state=state, latest=latest, path=path, busy=False, fresh=True)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_clicked(self):
+        if self.update['state'] == 'ready':
+            self._install_update()
+        else:
+            self._check_updates()
+
+    def _install_update(self):
+        u = self.update
+        try:
+            new = updater.install(u['path'])
+        except OSError as e:
+            self.append_log(f"Couldn't install the update: {e}")
+            u['state'] = 'failed'
+            return
+        self.append_log(f"Installed update {u['latest']}, restarting...")
+        # start the new version once this one has let go of its single-instance lock
+        subprocess.Popen(['sh', '-c', 'sleep 2; exec "$0"', new], start_new_session=True)
+        self.quit()
+
+    def _tick_updates(self):
+        u = self.update
+        if time.time() >= u['next']:
+            self._check_updates()
+        if not u.pop('fresh', False) and u['state'] != 'ready':
+            return
+        if u['state'] == 'current':
+            self.update_lbl.configure(text=f'Version {__version__} - up to date')
+        elif u['state'] == 'available':
+            self.update_lbl.configure(text=f"Version {u['latest']} is out - download it from GitHub")
+        elif u['state'] == 'failed':
+            self.update_lbl.configure(text=f'Version {__version__} - couldn't check (see Log)')
+        elif u['state'] == 'ready':
+            self.update_lbl.configure(text=f"Version {u['latest']} is ready")
+            self.btn_update.configure(text='Restart to update')
+            if self.s.get('auto_update') and not self.state.running_ids:
+                u['state'] = 'installing'
+                self._install_update()
+                return True
+        return False
+
     def _tick(self):
+        if self._tick_updates():
+            return
         while not self.state.log.empty():
             self.append_log(self.state.log.get_nowait())
         if getattr(self, '_scan_done', False):

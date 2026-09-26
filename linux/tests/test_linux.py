@@ -191,6 +191,29 @@ if music:
           and m['assets']['large_image'] == 'https://example.com/a.jpg' and m['timestamps']['end'] - m['timestamps']['start'] == 200000)
 eng2.close_all()
 
+# ---- updates
+from richpresence import updater  # noqa: E402
+check('versions compare as numbers', updater.version_tuple('v1.10.0') > updater.version_tuple('1.9.3') and updater.version_tuple('1.2') == (1, 2, 0))
+fake_app = TMP / 'RichPresence-x86_64.AppImage'
+fake_app.write_bytes(b'old')
+st_, latest, path = updater.check(current='99.0.0', appimage=str(fake_app), log=lambda m: None)
+check('no update when this is newer than the latest release', st_ == 'current', (st_, latest))
+st_, latest, path = updater.check(current='1.0.0', appimage=None, log=lambda m: None)
+check('a .deb/source install only hears that a version is out', st_ == 'available' and latest, (st_, latest))
+st_, latest, path = updater.check(current='1.0.0', appimage=str(fake_app), log=lambda m: None)
+check('an AppImage downloads the real latest release and verifies it', st_ == 'ready' and path and os.path.getsize(path) > 10_000_000, (st_, latest, path))
+if path:
+    new = updater.install(path, appimage=str(fake_app))
+    check('...and swaps it in, executable', new == str(fake_app) and fake_app.stat().st_size > 10_000_000 and os.access(fake_app, os.X_OK) and not os.path.exists(path))
+bad = {'tag_name': 'v99.0.0', 'assets': [{'name': 'RichPresence-x86_64.AppImage', 'digest': 'sha256:' + '0' * 64,
+       'browser_download_url': 'https://github.com/noice912/RichPresence/releases/latest/download/SHA256SUMS-linux.txt'}]}
+before = fake_app.read_bytes()[:64]
+st_, latest, path = updater.check(current='1.0.0', appimage=str(fake_app), release=bad, log=lambda m: None)
+check('a download that fails its checksum is thrown away', st_ == 'failed' and fake_app.read_bytes()[:64] == before
+      and not os.path.exists(str(fake_app) + '.download'), st_)
+nodigest = {'tag_name': 'v99.0.0', 'assets': [{'name': 'RichPresence-x86_64.AppImage', 'browser_download_url': 'https://example.com/x'}]}
+check('an update without a published checksum is refused', updater.check(current='1.0.0', appimage=str(fake_app), release=nodigest, log=lambda m: None)[0] == 'failed')
+
 srv.close()
 shutil.rmtree(TMP, ignore_errors=True)
 print(f'\n{bad} FAILURE(S)' if bad else '\nALL CHECKS PASSED')

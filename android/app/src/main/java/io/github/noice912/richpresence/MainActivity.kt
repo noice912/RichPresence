@@ -34,6 +34,10 @@ class MainActivity : Activity() {
     private lateinit var log: TextView
     private lateinit var discordLbl: TextView
     private lateinit var linkBtn: Button
+    private lateinit var updateLbl: TextView
+    private lateinit var updateBtn: Button
+    private var update: Updater.Result? = null
+    private var checking = false
     private val prefs by lazy { Prefs(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,8 +81,40 @@ class MainActivity : Activity() {
         root.addView(gamesBox)
         button("+ Add an app as a game", primary = false) { pickApp() }
 
+        section("Updates")
+        updateLbl = label("Version ${BuildConfig.VERSION_NAME}", 13f, dim)
+        updateBtn = button("Check for updates", primary = false) {
+            val u = update
+            if (u is Updater.Result.Ready) Updater.install(this, u.file) else checkForUpdate(force = true)
+        }
+
         section("Log")
         log = label("", 11f, dim).apply { typeface = Typeface.MONOSPACE }
+    }
+
+    /** Checks GitHub at most every 6 hours (or when asked); downloads and verifies a newer APK. */
+    private fun checkForUpdate(force: Boolean) {
+        val p = getSharedPreferences("updates", MODE_PRIVATE)
+        if (checking || (!force && System.currentTimeMillis() - p.getLong("last", 0) < 6 * 3_600_000L)) return
+        checking = true
+        p.edit().putLong("last", System.currentTimeMillis()).apply()
+        updateLbl.text = "Version ${BuildConfig.VERSION_NAME} - checking for updates..."
+        Thread {
+            val r = Updater.check(java.io.File(cacheDir, "updates"), BuildConfig.VERSION_NAME)
+            runOnUiThread {
+                checking = false
+                update = r
+                when (r) {
+                    is Updater.Result.Current -> updateLbl.text = "Version ${BuildConfig.VERSION_NAME} - up to date"
+                    is Updater.Result.Failed -> { updateLbl.text = "Version ${BuildConfig.VERSION_NAME} - ${r.why}"; Bus.say(r.why) }
+                    is Updater.Result.Ready -> {
+                        updateLbl.text = "Version ${r.version} is ready. Tap Install; Android asks you to confirm."
+                        updateBtn.text = "Install version ${r.version}"
+                        Bus.say("Update ${r.version} downloaded and verified")
+                    }
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
@@ -86,6 +122,7 @@ class MainActivity : Activity() {
         Bus.listener = { refresh() }
         refresh()
         fillGames()
+        checkForUpdate(force = false)
     }
 
     override fun onPause() {
