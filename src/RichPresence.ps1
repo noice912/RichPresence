@@ -49,6 +49,7 @@ function New-DefaultSettings {
         start_presence_on_open = $true
         exit_when_game_closes  = $false
         start_with_windows     = $false
+        official_to_discord    = $true      # let Discord show games it knows itself (keeps Recent Activity / streaks)
         close_to_tray          = $true
     }
 }
@@ -285,6 +286,7 @@ $Engine = {
     $ShowLyrics = [bool]$S.show_lyrics
     $ShowArt    = [bool]$S.show_album_art
     $ShowApps   = [bool]$S.show_current_app
+    $OfficialToDiscord = [bool]$S.official_to_discord
     foreach ($pair in @(@('game', $GameId), @('music', $MusicId), @('app', $AppId))) {
         if ($pair[1] -notmatch '^\d{17,20}$') { Log "The $($pair[0]) Discord app ID isn't valid (17-20 digits). Fix it under Music & Apps > Advanced."; return }
     }
@@ -503,6 +505,8 @@ public static class RPFG {
     function Update-GameCards($running) {
         $wanted = @{}
         foreach ($r in $running) {
+            # Discord detects its official games itself; our card would replace its own (and its streaks)
+            if ($OfficialToDiscord -and $r.G.discordId) { continue }
             # official Discord app if we know one, otherwise the shared generic game app
             $cid = if ($r.G.discordId) { "$($r.G.discordId)" } else { $GameId }
             if (-not $wanted.ContainsKey($cid)) { $wanted[$cid] = $r }
@@ -860,9 +864,10 @@ $chkAutoStart = New-Check $pSettings 'Start the presence when RichPresence opens
 $chkExit      = New-Check $pSettings 'Quit RichPresence when the game I launched closes' 274
 $chkTray      = New-Check $pSettings 'Closing the window keeps it running in the tray' 302
 $chkWin       = New-Check $pSettings 'Start with Windows' 330
-$btnSave = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Save && rescan'; Location = (Pt 24 376); Size = (Sz 140 34) }
+$chkOfficial  = New-Check $pSettings 'Let Discord show official games itself (keeps Recent Activity and streaks; no Genshin stats line)' 358
+$btnSave = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Save && rescan'; Location = (Pt 24 404); Size = (Sz 140 34) }
 Style-Button $btnSave $true
-$linkGuide = New-Ctl System.Windows.Forms.LinkLabel $pSettings @{ Text = 'Help & source on GitHub'; UseMnemonic = $false; Location = (Pt 24 430); AutoSize = $true; LinkColor = $cAccent }
+$linkGuide = New-Ctl System.Windows.Forms.LinkLabel $pSettings @{ Text = 'Help & source on GitHub'; UseMnemonic = $false; Location = (Pt 24 458); AutoSize = $true; LinkColor = $cAccent }
 
 # ---- Log page
 $log = New-Ctl System.Windows.Forms.TextBox $pLog @{ Dock = 'Fill'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; BackColor = $cCard; ForeColor = $cText; BorderStyle = 'None'; Font = (New-Object System.Drawing.Font('Consolas', 9)) }
@@ -875,6 +880,7 @@ function Apply-ToUi {
     $chkArt.Checked = [bool]$Settings.show_album_art; $chkApps.Checked = [bool]$Settings.show_current_app
     $chkAutoStart.Checked = [bool]$Settings.start_presence_on_open; $chkExit.Checked = [bool]$Settings.exit_when_game_closes
     $chkTray.Checked = [bool]$Settings.close_to_tray; $chkWin.Checked = [bool]$Settings.start_with_windows
+    $chkOfficial.Checked = [bool]$Settings.official_to_discord
 }
 function Read-FromUi {
     $Settings.genshin_uid = $txtUid.Text.Trim()
@@ -883,6 +889,7 @@ function Read-FromUi {
     $Settings.show_album_art = $chkArt.Checked; $Settings.show_current_app = $chkApps.Checked
     $Settings.start_presence_on_open = $chkAutoStart.Checked; $Settings.exit_when_game_closes = $chkExit.Checked
     $Settings.close_to_tray = $chkTray.Checked; $Settings.start_with_windows = $chkWin.Checked
+    $Settings.official_to_discord = $chkOfficial.Checked
     Save-Settings $Settings
 }
 function Append-Log($line) {
