@@ -16,6 +16,7 @@ final class Spotify: NSObject, ObservableObject, ASWebAuthenticationPresentation
     private var access: String? = Keychain.get("spotify_access")
     private var expires = UserDefaults.standard.object(forKey: "spotify_expires") as? Date ?? .distantPast
     private var session: ASWebAuthenticationSession?
+    private var lastProblem: String?
     private let say: (String) -> Void
 
     init(say: @escaping (String) -> Void) { self.say = say }
@@ -102,9 +103,25 @@ final class Spotify: NSObject, ObservableObject, ASWebAuthenticationPresentation
         guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 401 { expires = .distantPast; return nil }
+        if code != 200 && code != 204 {
+            // say why once per kind of problem (403 usually means the account isn't allowed in development mode)
+            let why = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+                .flatMap { ($0["error"] as? [String: Any])?["message"] as? String } ?? String(data: data, encoding: .utf8) ?? ""
+            let line = "Spotify answered \(code): \(why.prefix(200))"
+            if line != lastProblem { lastProblem = line; say(line) }
+            return nil
+        }
+        if code == 204 {
+            if lastProblem != "idle" { lastProblem = "idle"; say("Spotify: nothing playing on your account right now") }
+            return nil
+        }
+        lastProblem = nil
         guard code == 200, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               j["is_playing"] as? Bool == true, let item = j["item"] as? [String: Any],
-              let title = item["name"] as? String else { return nil }
+              let title = item["name"] as? String else {
+            if lastProblem != "paused" { lastProblem = "paused"; say("Spotify: paused, or not a song (podcast/ad)") }
+            return nil
+        }
         let artists = (item["artists"] as? [[String: Any]])?.compactMap { $0["name"] as? String }.joined(separator: ", ") ?? ""
         let album = item["album"] as? [String: Any]
         let art = (album?["images"] as? [[String: Any]])?.first?["url"] as? String
