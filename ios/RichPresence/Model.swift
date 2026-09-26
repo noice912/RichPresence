@@ -236,9 +236,13 @@ final class Model: ObservableObject {
             if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
             lastSent = sig
             sentAt = Date()
-            // like the Windows card: "Playing <game>"
-            discord.update(withType: 0, name: g, display: 2, details: String(g.prefix(128)), state: "on iPhone",
-                           start: Int64(gameSince.timeIntervalSince1970 * 1000), end: 0, image: nil, imageText: nil)
+            // like the Windows card: "Playing <game>", with the game's App Store icon
+            let start = Int64(gameSince.timeIntervalSince1970 * 1000)
+            appIcon(for: g) { [weak self] icon in
+                guard let self, self.game == g else { return }
+                self.discord.update(withType: 0, name: g, display: 0, details: "on iPhone", state: nil,
+                                    start: start, end: 0, image: icon, imageText: icon == nil ? nil : g)
+            }
             return
         }
         guard showMusic, let t = track else {
@@ -260,6 +264,29 @@ final class Model: ObservableObject {
                                  start: start, end: end, image: art,
                                  imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
         }
+    }
+
+    /// A game's icon from the App Store (Apple's public search), cached per name.
+    private func appIcon(for name: String, done: @escaping (String?) -> Void) {
+        let key = "app|\(name.lowercased())"
+        if let hit = artCache[key] { done(hit.isEmpty ? nil : hit); return }
+        var c = URLComponents(string: "https://itunes.apple.com/search")!
+        c.queryItems = [.init(name: "term", value: name), .init(name: "entity", value: "software"),
+                        .init(name: "limit", value: "5")]
+        URLSession.shared.dataTask(with: c.url!) { data, _, _ in
+            var url: String?
+            if let data, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let results = j["results"] as? [[String: Any]] {
+                // prefer an exact name match, otherwise the top result
+                let exact = results.first { ($0["trackName"] as? String)?.lowercased() == name.lowercased() }
+                let pick = exact ?? results.first
+                url = (pick?["artworkUrl512"] ?? pick?["artworkUrl100"]) as? String
+            }
+            Task { @MainActor in
+                self.artCache[key] = url ?? ""
+                done(url)
+            }
+        }.resume()
     }
 
     /// Album art from Apple's public search (Discord needs a web address, not the image itself).
