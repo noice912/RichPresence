@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>DiscordAppId</key>
 	<string>$(DISCORD_APP_ID)</string>
+	<key>DiscordMusicAppId</key>
+	<string>$(DISCORD_MUSIC_APP_ID)</string>
 	<!-- Discord sign-in returns to the app through this link -->
 	<key>CFBundleURLTypes</key>
 	<array>
@@ -31,6 +33,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>discord-$(DISCORD_APP_ID)</string>
+				<string>discord-$(DISCORD_MUSIC_APP_ID)</string>
 			</array>
 		</dict>
 	</array>

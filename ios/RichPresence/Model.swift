@@ -46,9 +46,10 @@ final class Model: ObservableObject {
     private var keepAlive: AVAudioPlayer?
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
-    @Published var linkedName: String? = UserDefaults.standard.string(forKey: "user")
-    @Published var connected = false
-    @Published var linking = false
+    /// Games (and music, until the music card is linked) on "RichPresence Mobile"; music on "RichPresence Music".
+    let gameLink: Link
+    let musicLink: Link
+    var anyLinked: Bool { gameLink.name != nil || musicLink.name != nil }
     @Published var musicAllowed = MPMediaLibrary.authorizationStatus() == .authorized
     @Published var showMusic = UserDefaults.standard.object(forKey: "show_music") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showMusic, forKey: "show_music"); push(force: true) }
@@ -68,40 +69,26 @@ final class Model: ObservableObject {
     // saved, so lines written while iOS ran the app in the background (Shortcuts) are still there later
     @Published var log: [String] = UserDefaults.standard.stringArray(forKey: "log") ?? []
 
-    private let discord: DiscordBridge
     private var pump: Timer?
     private var poll: Timer?
     private var artCache: [String: String] = [:]
-    private var lastSent: String?
-    private var sentAt = Date.distantPast
 
     private init() {
-        let id = UInt64(Bundle.main.object(forInfoDictionaryKey: "DiscordAppId") as? String ?? "") ?? 0
-        discord = DiscordBridge(appId: id)
-        discord.onLog = { [weak self] m in self?.say(m) }
-        discord.onTokens = { [weak self] access, refresh, expiresIn in
-            Keychain.set(access, for: "access")
-            Keychain.set(refresh, for: "refresh")
-            UserDefaults.standard.set(Date().addingTimeInterval(TimeInterval(expiresIn)), forKey: "expires_at")
-            if self?.linking == true { self?.say("Discord account linked.") }
-            self?.linking = false
-        }
-        discord.onReady = { [weak self] name in
-            guard let self else { return }
-            self.connected = true
-            self.linkedName = name
-            UserDefaults.standard.set(name, forKey: "user")
-            self.say("Signed in to Discord as \(name)")
-            self.lastSent = nil
-            self.push(force: true)
-            self.updateAwake()
-        }
-        discord.onDisconnected = { [weak self] reason in
-            self?.connected = false
-            if !reason.isEmpty { self?.say("Discord disconnected: \(reason)") }
+        func appId(_ key: String) -> UInt64 { UInt64(Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "") ?? 0 }
+        var sayLater: (String) -> Void = { _ in }
+        gameLink = Link(label: "Game card", appId: appId("DiscordAppId"), prefix: "", say: { sayLater($0) })
+        musicLink = Link(label: "Music card", appId: appId("DiscordMusicAppId"), prefix: "music_", say: { sayLater($0) })
+        sayLater = { [weak self] m in self?.say(m) }
+        for l in [gameLink, musicLink] {
+            l.onReady = { [weak self] in
+                self?.push(force: true)
+                self?.updateAwake()
+                self?.objectWillChange.send()
+            }
         }
         pump = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.discord.runCallbacks() }
+            // one call runs the callbacks of both Discord connections
+            MainActor.assumeIsolated { self?.gameLink.bridge.runCallbacks() }
         }
         poll = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshTrack() }
@@ -125,14 +112,21 @@ final class Model: ObservableObject {
                 self?.keepAlive?.play()
             }
         }
-        signInSaved()
+        gameLink.signInSaved()
+        musicLink.signInSaved()
         refreshTrack()
         updateAwake()
     }
 
     /// Stay running while a game is showing, or all the time when "Keep running in the background" is on.
     func updateAwake() {
-        stayAwake(game != nil || (background && linkedName != nil))
+        stayAwake(game != nil || (background && anyLinked))
+    }
+
+    /// Where the music card goes: its own app once linked, otherwise the game card's app when no game is showing.
+    private var musicTarget: Link? {
+        if musicLink.name != nil { return musicLink }
+        return game == nil ? gameLink : nil
     }
 
     // ------------------------------------------------ lyrics (lrclib.net, like the Windows version)
@@ -149,7 +143,7 @@ final class Model: ObservableObject {
         guard clean != lyricLine else { return }
         lyricLine = clean
         // Discord limits how often a status can change, so lines at most every 4 seconds
-        if game == nil && Date().timeIntervalSince(sentAt) >= 4 { push(force: true) }
+        if let target = musicTarget, Date().timeIntervalSince(target.sentAt) >= 4 { push(force: true) }
     }
 
     private func loadLyrics(_ t: Track, key: String) {
@@ -192,30 +186,16 @@ final class Model: ObservableObject {
     }
 
     // ------------------------------------------------ Discord
-    private func signInSaved() {
-        guard let refresh = Keychain.get("refresh") else { return }
-        let expires = UserDefaults.standard.object(forKey: "expires_at") as? Date ?? .distantPast
-        if let access = Keychain.get("access"), expires.timeIntervalSinceNow > 86_400 {
-            discord.useAccessToken(access)
-        } else {
-            discord.refresh(withToken: refresh)
-        }
+    func link(_ l: Link) {
+        l.link()
+        objectWillChange.send()
     }
 
-    func link() {
-        linking = true
-        say("Opening Discord to link your account...")
-        discord.authorize()
-    }
-
-    func unlink() {
-        Keychain.set(nil, for: "access")
-        Keychain.set(nil, for: "refresh")
-        UserDefaults.standard.removeObject(forKey: "user")
-        discord.disconnect()
-        linkedName = nil
-        connected = false
-        say("Discord account unlinked.")
+    func unlink(_ l: Link) {
+        l.unlink()
+        updateAwake()
+        push(force: true)
+        objectWillChange.send()
     }
 
     // ------------------------------------------------ Apple Music
@@ -322,40 +302,40 @@ final class Model: ObservableObject {
     }
 
     private func push(force: Bool) {
-        guard connected else { return }
+        let music = musicTarget
+
+        // ---- game card
         if let g = game {
-            let sig = "game|\(g)"
-            if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
-            lastSent = sig
-            sentAt = Date()
-            // like the Windows card: "Playing <game>", with the game's App Store icon
             let start = Int64(gameSince.timeIntervalSince1970 * 1000)
-            appIcon(for: g) { [weak self] icon in
-                guard let self, self.game == g else { return }
-                self.discord.update(withType: 0, name: g, display: 0, details: "on iPhone", state: nil,
-                                    start: start, end: 0, image: icon, imageText: icon == nil ? nil : g)
+            gameLink.send("game|\(g)", force: force) { _ in
+                // like the Windows card: "Playing <game>", with the game's App Store icon
+                appIcon(for: g) { [weak self] icon in
+                    guard let self, self.game == g else { return }
+                    self.gameLink.bridge.update(withType: 0, name: g, display: 0, details: "on iPhone", state: nil,
+                                                start: start, end: 0, image: icon, imageText: icon == nil ? nil : g)
+                }
             }
-            return
+        } else if music !== gameLink {
+            gameLink.clear()
         }
-        guard showMusic, let t = track else {
-            if lastSent != nil { discord.clear(); lastSent = nil }
-            return
-        }
+
+        // ---- music card
+        if music !== musicLink { musicLink.clear() }
+        guard let target = music else { return }
+        guard showMusic, let t = track else { target.clear(); return }
         let lyric = showLyrics ? lyricLine : nil
-        let sig = "\(t.artist)|\(t.title)|\(t.album)|\(lyric ?? "")"
-        if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
-        lastSent = sig
-        sentAt = Date()
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let start = now - Int64(t.position * 1000)
         let end = t.duration > 0 ? start + Int64(t.duration * 1000) : 0
-        artwork(for: t) { [weak self] art in
-            // like the Windows card: "Listening to <artist>", song title on the first line
-            let artist = t.artist.isEmpty ? "Apple Music" : String(t.artist.prefix(128))
-            self?.discord.update(withType: 2, name: artist, display: 0, details: String(t.title.prefix(128)),
-                                 state: lyric ?? (t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128))),
-                                 start: start, end: end, image: art,
-                                 imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
+        target.send("\(t.artist)|\(t.title)|\(t.album)|\(lyric ?? "")", force: force) { bridge in
+            artwork(for: t) { art in
+                // like the Windows card: "Listening to <artist>", song title on the first line
+                let artist = t.artist.isEmpty ? "Apple Music" : String(t.artist.prefix(128))
+                bridge.update(withType: 2, name: artist, display: 0, details: String(t.title.prefix(128)),
+                              state: lyric ?? (t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128))),
+                              start: start, end: end, image: art,
+                              imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
+            }
         }
     }
 

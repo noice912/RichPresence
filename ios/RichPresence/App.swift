@@ -23,18 +23,13 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Discord") {
-                    if let name = model.linkedName {
-                        Label(model.connected ? "Linked as \(name)" : "Linked as \(name) (connecting...)", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(green)
-                        Button("Unlink", role: .destructive) { model.unlink() }
-                    } else {
-                        Text("Link your Discord account so the app can set your status.").foregroundStyle(.secondary)
-                        Button { model.link() } label: {
-                            Text(model.linking ? "Waiting for Discord..." : "Link Discord account").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent).tint(accent).disabled(model.linking)
-                    }
+                Section {
+                    LinkRow(link: model.gameLink, what: "games", accent: accent, green: green)
+                    LinkRow(link: model.musicLink, what: "music", accent: accent, green: green)
+                } header: {
+                    Text("Discord")
+                } footer: {
+                    Text("Discord shows one card per app, so games and music each have their own. Link both to show a game and a song at the same time. Until the music card is linked, music uses the game card when no game is showing.")
                 }
 
                 Section {
@@ -90,6 +85,31 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("RichPresence")
+        }
+    }
+}
+
+/// Link / unlink one Discord card (each is its own Discord app, so each is linked once).
+struct LinkRow: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var link: Link
+    let what: String
+    let accent: Color
+    let green: Color
+
+    var body: some View {
+        if let name = link.name {
+            HStack {
+                Label("\(link.label): \(name)\(link.connected ? "" : " (connecting...)")", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(green)
+                Spacer()
+                Button("Unlink", role: .destructive) { model.unlink(link) }.buttonStyle(.borderless)
+            }
+        } else {
+            Button { model.link(link) } label: {
+                Text(link.linking ? "Waiting for Discord..." : "Link the \(what) card").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).tint(accent).disabled(link.linking)
         }
     }
 }
