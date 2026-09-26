@@ -54,7 +54,8 @@ final class Model: ObservableObject {
         didSet { UserDefaults.standard.set(showMusic, forKey: "show_music"); push(force: true) }
     }
     @Published var track: Track?
-    @Published var log: [String] = []
+    // saved, so lines written while iOS ran the app in the background (Shortcuts) are still there later
+    @Published var log: [String] = UserDefaults.standard.stringArray(forKey: "log") ?? []
 
     private let discord: DiscordBridge
     private var pump: Timer?
@@ -109,6 +110,7 @@ final class Model: ObservableObject {
         f.dateFormat = "HH:mm:ss"
         log.append("[\(f.string(from: Date()))] \(m)")
         if log.count > 200 { log.removeFirst(log.count - 200) }
+        UserDefaults.standard.set(log, forKey: "log")
     }
 
     // ------------------------------------------------ Discord
