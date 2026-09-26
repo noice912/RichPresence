@@ -1,0 +1,32 @@
+# Xcode project definition (turned into RichPresence.xcodeproj by XcodeGen in CI):
+#   brew install xcodegen && cd ios && xcodegen
+name: RichPresence
+options:
+  bundleIdPrefix: io.github.noice912
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: ${APPLE_TEAM_ID}
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: ${BUILD_NUMBER}
+    SWIFT_VERSION: "5.0"
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+targets:
+  RichPresence:
+    type: application
+    platform: iOS
+    sources:
+      - path: RichPresence
+    dependencies:
+      - framework: sdk/discord_partner_sdk.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.noice912.richpresence
+        SWIFT_OBJC_BRIDGING_HEADER: RichPresence/RichPresence-Bridging-Header.h
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: RichPresence/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        DISCORD_APP_ID: "1553178514365358100"

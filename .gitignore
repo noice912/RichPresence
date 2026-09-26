@@ -13,3 +13,7 @@ android/sdk/*
 !android/sdk/README.md
 android/keystore.properties
 android/app/.cxx/
+ios/sdk/*
+!ios/sdk/README.md
+ios/*.xcodeproj/
+ios/build.log

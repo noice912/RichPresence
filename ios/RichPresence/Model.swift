@@ -1,0 +1,195 @@
+import Foundation
+import MediaPlayer
+import Security
+
+/// Tokens go in the Keychain, not in plain settings.
+enum Keychain {
+    private static let service = "io.github.noice912.richpresence.discord"
+
+    static func set(_ value: String?, for key: String) {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                   kSecAttrService as String: service, kSecAttrAccount as String: key]
+        SecItemDelete(base as CFDictionary)
+        guard let value else { return }
+        var add = base
+        add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        SecItemAdd(add as CFDictionary, nil)
+    }
+
+    static func get(_ key: String) -> String? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: key, kSecReturnData as String: true]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+}
+
+struct Track: Equatable {
+    var title: String
+    var artist: String
+    var album: String
+    var duration: TimeInterval
+    var position: TimeInterval
+}
+
+@MainActor
+final class Model: ObservableObject {
+    @Published var linkedName: String? = UserDefaults.standard.string(forKey: "user")
+    @Published var connected = false
+    @Published var linking = false
+    @Published var musicAllowed = MPMediaLibrary.authorizationStatus() == .authorized
+    @Published var showMusic = UserDefaults.standard.object(forKey: "show_music") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showMusic, forKey: "show_music"); push(force: true) }
+    }
+    @Published var track: Track?
+    @Published var log: [String] = []
+
+    private let discord: DiscordBridge
+    private var pump: Timer?
+    private var poll: Timer?
+    private var artCache: [String: String] = [:]
+    private var lastSent: String?
+    private var sentAt = Date.distantPast
+
+    init() {
+        let id = UInt64(Bundle.main.object(forInfoDictionaryKey: "DiscordAppId") as? String ?? "") ?? 0
+        discord = DiscordBridge(appId: id)
+        discord.onLog = { [weak self] m in self?.say(m) }
+        discord.onTokens = { [weak self] access, refresh, expiresIn in
+            Keychain.set(access, for: "access")
+            Keychain.set(refresh, for: "refresh")
+            UserDefaults.standard.set(Date().addingTimeInterval(TimeInterval(expiresIn)), forKey: "expires_at")
+            if self?.linking == true { self?.say("Discord account linked.") }
+            self?.linking = false
+        }
+        discord.onReady = { [weak self] name in
+            guard let self else { return }
+            self.connected = true
+            self.linkedName = name
+            UserDefaults.standard.set(name, forKey: "user")
+            self.say("Signed in to Discord as \(name)")
+            self.lastSent = nil
+            self.push(force: true)
+        }
+        discord.onDisconnected = { [weak self] reason in
+            self?.connected = false
+            if !reason.isEmpty { self?.say("Discord disconnected: \(reason)") }
+        }
+        pump = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.discord.runCallbacks() }
+        }
+        poll = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshTrack() }
+        }
+        let player = MPMusicPlayerController.systemMusicPlayer
+        player.beginGeneratingPlaybackNotifications()
+        for n in [Notification.Name.MPMusicPlayerControllerNowPlayingItemDidChange, .MPMusicPlayerControllerPlaybackStateDidChange] {
+            NotificationCenter.default.addObserver(forName: n, object: player, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshTrack() }
+            }
+        }
+        signInSaved()
+        refreshTrack()
+    }
+
+    func say(_ m: String) {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        log.append("[\(f.string(from: Date()))] \(m)")
+        if log.count > 200 { log.removeFirst(log.count - 200) }
+    }
+
+    // ------------------------------------------------ Discord
+    private func signInSaved() {
+        guard let refresh = Keychain.get("refresh") else { return }
+        let expires = UserDefaults.standard.object(forKey: "expires_at") as? Date ?? .distantPast
+        if let access = Keychain.get("access"), expires.timeIntervalSinceNow > 86_400 {
+            discord.useAccessToken(access)
+        } else {
+            discord.refresh(withToken: refresh)
+        }
+    }
+
+    func link() {
+        linking = true
+        say("Opening Discord to link your account...")
+        discord.authorize()
+    }
+
+    func unlink() {
+        Keychain.set(nil, for: "access")
+        Keychain.set(nil, for: "refresh")
+        UserDefaults.standard.removeObject(forKey: "user")
+        discord.disconnect()
+        linkedName = nil
+        connected = false
+        say("Discord account unlinked.")
+    }
+
+    // ------------------------------------------------ Apple Music
+    func askForMusic() {
+        MPMediaLibrary.requestAuthorization { status in
+            Task { @MainActor in
+                self.musicAllowed = status == .authorized
+                self.refreshTrack()
+            }
+        }
+    }
+
+    func refreshTrack() {
+        let p = MPMusicPlayerController.systemMusicPlayer
+        var t: Track?
+        if musicAllowed, p.playbackState == .playing, let item = p.nowPlayingItem, let title = item.title, !title.isEmpty {
+            t = Track(title: title, artist: item.artist ?? "", album: item.albumTitle ?? "",
+                      duration: item.playbackDuration, position: p.currentPlaybackTime)
+        }
+        if t?.title != track?.title || t?.artist != track?.artist {
+            if let t { say("Music: \(t.artist) - \(t.title)") }
+        }
+        track = t
+        push(force: false)
+    }
+
+    private func push(force: Bool) {
+        guard connected else { return }
+        guard showMusic, let t = track else {
+            if lastSent != nil { discord.clear(); lastSent = nil }
+            return
+        }
+        let sig = "\(t.artist)|\(t.title)|\(t.album)"
+        if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
+        lastSent = sig
+        sentAt = Date()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let start = now - Int64(t.position * 1000)
+        let end = t.duration > 0 ? start + Int64(t.duration * 1000) : 0
+        artwork(for: t) { [weak self] art in
+            self?.discord.update(withType: 2, details: String(t.title.prefix(128)),
+                                 state: t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128)),
+                                 start: start, end: end, image: art,
+                                 imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
+        }
+    }
+
+    /// Album art from Apple's public search (Discord needs a web address, not the image itself).
+    private func artwork(for t: Track, done: @escaping (String?) -> Void) {
+        let key = "\(t.artist)|\(t.album)|\(t.title)"
+        if let hit = artCache[key] { done(hit.isEmpty ? nil : hit); return }
+        var c = URLComponents(string: "https://itunes.apple.com/search")!
+        c.queryItems = [.init(name: "term", value: "\(t.artist) \(t.album) \(t.title)"),
+                        .init(name: "entity", value: "song"), .init(name: "limit", value: "1")]
+        URLSession.shared.dataTask(with: c.url!) { data, _, _ in
+            var url: String?
+            if let data, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let r = (j["results"] as? [[String: Any]])?.first, let a = r["artworkUrl100"] as? String {
+                url = a.replacingOccurrences(of: "100x100bb", with: "512x512bb")
+            }
+            Task { @MainActor in
+                self.artCache[key] = url ?? ""
+                done(url)
+            }
+        }.resume()
+    }
+}

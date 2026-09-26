@@ -1,0 +1,87 @@
+name: Build iOS
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-15
+    env:
+      SDK_TOKEN: ${{ secrets.SDK_REPO_TOKEN }}
+      ASC_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Discord's SDK can't be in this public repo; it lives in a private one only this workflow can read.
+      - name: Get Discord's SDK (private repo)
+        if: env.SDK_TOKEN != ''
+        uses: actions/checkout@v5
+        with:
+          repository: noice912/RichPresence-sdk
+          token: ${{ secrets.SDK_REPO_TOKEN }}
+          path: private-sdk
+
+      - name: Check the SDK is there
+        id: sdk
+        run: |
+          if [ -d private-sdk/ios/discord_partner_sdk.xcframework ]; then
+            cp -R private-sdk/ios/discord_partner_sdk.xcframework ios/sdk/
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=iOS::Discord's SDK isn't available to this build (set the SDK_REPO_TOKEN secret), so the iOS app was not built."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Make the Xcode project
+        if: steps.sdk.outputs.ok == 'true'
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for the simulator (checks that everything compiles)
+        if: steps.sdk.outputs.ok == 'true'
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build -project RichPresence.xcodeproj -scheme RichPresence \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM= 2>&1 | tee build.log | grep -E "error:|warning: .*RichPresence|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log || { grep -E "error:" build.log | head -20 | sed 's/^/::error title=xcode::/'; exit 1; }
+
+      # With the App Store Connect key, sign the app and send it to TestFlight.
+      - name: Archive, sign and upload to TestFlight
+        if: steps.sdk.outputs.ok == 'true' && env.ASC_KEY != ''
+        working-directory: ios
+        run: |
+          set -o pipefail
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_KEY" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER")
+          xcodebuild archive -project RichPresence.xcodeproj -scheme RichPresence \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/RichPresence.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" "${AUTH[@]}" 2>&1 | tee archive.log | grep -E "error:|ARCHIVE" || true
+          grep -q "ARCHIVE SUCCEEDED" archive.log || { grep -E "error:" archive.log | head -20 | sed 's/^/::error title=archive::/'; exit 1; }
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/RichPresence.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" "${AUTH[@]}" 2>&1 | tee export.log | tail -5
+          grep -qE "EXPORT SUCCEEDED|Upload succeeded|Uploaded" export.log || { grep -iE "error" export.log | head -20 | sed 's/^/::error title=upload::/'; exit 1; }
+          echo "::notice title=TestFlight::Build $BUILD_NUMBER uploaded. It appears in TestFlight after Apple finishes processing (usually 5-15 minutes)."
+          rm -f "$KEY"
