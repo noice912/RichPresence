@@ -34,6 +34,19 @@ struct Track: Equatable {
     var album: String
     var duration: TimeInterval
     var position: TimeInterval
+    /// when `position` was read, so the current position can be worked out later
+    var at = Date()
+    var artUrl: String? = nil
+    var source = "Apple Music"
+
+    var currentPosition: TimeInterval {
+        let p = position + Date().timeIntervalSince(at)
+        return duration > 0 ? min(p, duration) : p
+    }
+
+    static func == (a: Track, b: Track) -> Bool {
+        a.title == b.title && a.artist == b.artist && a.album == b.album && a.source == b.source
+    }
 }
 
 @MainActor
@@ -49,6 +62,7 @@ final class Model: ObservableObject {
     /// Games (and music, until the music card is linked) on "RichPresence Mobile"; music on "RichPresence Music".
     let gameLink: Link
     let musicLink: Link
+    let spotify: Spotify
     var anyLinked: Bool { gameLink.name != nil || musicLink.name != nil }
     @Published var musicAllowed = MPMediaLibrary.authorizationStatus() == .authorized
     @Published var showMusic = UserDefaults.standard.object(forKey: "show_music") as? Bool ?? true {
@@ -78,6 +92,7 @@ final class Model: ObservableObject {
         var sayLater: (String) -> Void = { _ in }
         gameLink = Link(label: "Game card", appId: appId("DiscordAppId"), prefix: "", say: { sayLater($0) })
         musicLink = Link(label: "Music card", appId: appId("DiscordMusicAppId"), prefix: "music_", say: { sayLater($0) })
+        spotify = Spotify(say: { sayLater($0) })
         sayLater = { [weak self] m in self?.say(m) }
         for l in [gameLink, musicLink] {
             l.onReady = { [weak self] in
@@ -91,7 +106,7 @@ final class Model: ObservableObject {
             MainActor.assumeIsolated { self?.gameLink.bridge.runCallbacks() }
         }
         poll = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshTrack() }
+            MainActor.assumeIsolated { self?.refreshTrack(); self?.refreshSpotify() }
         }
         let player = MPMusicPlayerController.systemMusicPlayer
         player.beginGeneratingPlaybackNotifications()
@@ -115,6 +130,7 @@ final class Model: ObservableObject {
         gameLink.signInSaved()
         musicLink.signInSaved()
         refreshTrack()
+        refreshSpotify()
         updateAwake()
     }
 
@@ -137,7 +153,7 @@ final class Model: ObservableObject {
         }
         let key = "\(t.artist)|\(t.title)|\(t.album)"
         guard let lines = lyricsCache[key] else { loadLyrics(t, key: key); return }
-        let pos = MPMusicPlayerController.systemMusicPlayer.currentPlaybackTime
+        let pos = t.source == "Apple Music" ? MPMusicPlayerController.systemMusicPlayer.currentPlaybackTime : t.currentPosition
         let line = lines.last(where: { $0.0 <= pos + 0.3 })?.1
         let clean = (line?.isEmpty ?? true) ? nil : String(line!.prefix(128))
         guard clean != lyricLine else { return }
@@ -208,15 +224,37 @@ final class Model: ObservableObject {
         }
     }
 
+    private var appleTrack: Track?
+    private var spotifyTrack: Track?
+
     func refreshTrack() {
         let p = MPMusicPlayerController.systemMusicPlayer
-        var t: Track?
+        appleTrack = nil
         if musicAllowed, p.playbackState == .playing, let item = p.nowPlayingItem, let title = item.title, !title.isEmpty {
-            t = Track(title: title, artist: item.artist ?? "", album: item.albumTitle ?? "",
-                      duration: item.playbackDuration, position: p.currentPlaybackTime)
+            appleTrack = Track(title: title, artist: item.artist ?? "", album: item.albumTitle ?? "",
+                               duration: item.playbackDuration, position: p.currentPlaybackTime)
         }
-        if t?.title != track?.title || t?.artist != track?.artist {
-            if let t { say("Music: \(t.artist) - \(t.title)") }
+        setTrack()
+    }
+
+    /// Spotify is asked every 5 seconds (its API has no "song changed" notification).
+    func refreshSpotify() {
+        guard spotify.linked else {
+            if spotifyTrack != nil { spotifyTrack = nil; setTrack() }
+            return
+        }
+        Task {
+            let t = await spotify.nowPlaying()
+            spotifyTrack = t
+            setTrack()
+        }
+    }
+
+    /// Spotify wins when both are playing (it's on the account, Apple Music is only this phone).
+    private func setTrack() {
+        let t = spotifyTrack ?? appleTrack
+        if t != track {
+            if let t { say("Music (\(t.source)): \(t.artist) - \(t.title)") }
             lyricLine = nil
         }
         track = t
@@ -325,12 +363,13 @@ final class Model: ObservableObject {
         guard showMusic, let t = track else { target.clear(); return }
         let lyric = showLyrics ? lyricLine : nil
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let start = now - Int64(t.position * 1000)
+        let start = now - Int64(t.currentPosition * 1000)
         let end = t.duration > 0 ? start + Int64(t.duration * 1000) : 0
         target.send("\(t.artist)|\(t.title)|\(t.album)|\(lyric ?? "")", force: force) { bridge in
-            artwork(for: t) { art in
+            let useArt: (@escaping (String?) -> Void) -> Void = { done in if let a = t.artUrl { done(a) } else { self.artwork(for: t, done: done) } }
+            useArt { art in
                 // like the Windows card: "Listening to <artist>", song title on the first line
-                let artist = t.artist.isEmpty ? "Apple Music" : String(t.artist.prefix(128))
+                let artist = t.artist.isEmpty ? t.source : String(t.artist.prefix(128))
                 bridge.update(withType: 2, name: artist, display: 0, details: String(t.title.prefix(128)),
                               state: lyric ?? (t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128))),
                               start: start, end: end, image: art,

@@ -38,13 +38,14 @@ struct ContentView: View {
                     } else {
                         Button("Allow Apple Music access") { model.askForMusic() }
                     }
+                    SpotifyRow(spotify: model.spotify, green: green)
                     Toggle("Show what I'm listening to", isOn: $model.showMusic)
                     Toggle("Show live lyrics", isOn: $model.showLyrics)
                     Toggle("Keep running in the background", isOn: $model.background)
                 } header: {
-                    Text("Apple Music")
+                    Text("Music")
                 } footer: {
-                    Text("iOS only lets apps see Apple Music, not other players. With \"Keep running in the background\" on, RichPresence plays a silent sound so iOS keeps it running and new songs show up without opening the app. It uses a little more battery.")
+                    Text("Apple Music is read from this iPhone; Spotify is read from your account, so it works whichever device is playing. If both are playing, Spotify is shown. With \"Keep running in the background\" on, RichPresence plays a silent sound so iOS keeps it running and new songs show up without opening the app. It uses a little more battery.")
                 }
 
                 Section {
@@ -110,6 +111,24 @@ struct LinkRow: View {
                 Text(link.linking ? "Waiting for Discord..." : "Link the \(what) card").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).tint(accent).disabled(link.linking)
+        }
+    }
+}
+
+struct SpotifyRow: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var spotify: Spotify
+    let green: Color
+
+    var body: some View {
+        if spotify.linked {
+            HStack {
+                Label("Spotify linked", systemImage: "checkmark.circle.fill").foregroundStyle(green)
+                Spacer()
+                Button("Unlink", role: .destructive) { spotify.unlink(); model.refreshSpotify() }.buttonStyle(.borderless)
+            }
+        } else {
+            Button(spotify.linking ? "Waiting for Spotify..." : "Link Spotify") { spotify.link() }.disabled(spotify.linking)
         }
     }
 }
