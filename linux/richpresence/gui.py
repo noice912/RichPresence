@@ -145,7 +145,8 @@ class App:
                          'Music works with any player that shows up in your desktop\'s media controls (Spotify, browsers, Rhythmbox, Cider, ...).',
                  bg=BG, fg=DIM, justify='left').pack(anchor='w', pady=(4, 14))
         self.v = {k: tk.BooleanVar() for k in ('show_music', 'show_lyrics', 'show_album_art', 'show_current_app',
-                                                'music_only', 'start_presence_on_open', 'exit_when_game_closes', 'close_to_tray', 'start_on_login')}
+                                                'music_only', 'start_presence_on_open', 'exit_when_game_closes', 'close_to_tray', 'start_on_login',
+                                                'official_to_discord')}
         for k, t in (('show_music', "Show what I'm listening to"), ('music_only', 'Only music apps (skip browsers and video players)'),
                      ('show_lyrics', 'Show the current lyric line'), ('show_album_art', 'Show album art'),
                      ('show_current_app', "Show the app I'm using when nothing else is showing")):
@@ -169,7 +170,8 @@ class App:
         for k, t in (('start_presence_on_open', 'Start the presence when RichPresence opens'),
                      ('exit_when_game_closes', 'Quit RichPresence when the game I launched closes'),
                      ('close_to_tray', 'Closing the window keeps it running in the tray'),
-                     ('start_on_login', 'Start when I log in')):
+                     ('start_on_login', 'Start when I log in'),
+                     ('official_to_discord', 'Let Discord detect official games first (keeps streaks), then show my card after 2 minutes')):
             self._check(st, t, self.v[k]).pack(anchor='w', pady=2)
         self._btn(st, 'Save & rescan', self._save_all, primary=True).pack(anchor='w', pady=16)
         link = tk.Label(st, text='Help & source on GitHub', bg=BG, fg=ACCENT, cursor='hand2')

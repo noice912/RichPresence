@@ -28,6 +28,8 @@ DEFAULTS = {
     'exit_when_game_closes': False,
     'start_on_login': False,
     'close_to_tray': True,
+    'official_to_discord': True,     # let Discord detect games it knows first (keeps streaks)...
+    'official_delay_minutes': 2,     # ...then show our own card after this long
 }
 
 

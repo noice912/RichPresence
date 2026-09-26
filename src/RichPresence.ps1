@@ -49,7 +49,8 @@ function New-DefaultSettings {
         start_presence_on_open = $true
         exit_when_game_closes  = $false
         start_with_windows     = $false
-        official_to_discord    = $true      # let Discord show games it knows itself (keeps Recent Activity / streaks)
+        official_to_discord    = $true      # let Discord detect games it knows first (keeps Recent Activity / streaks)
+        official_delay_minutes = 2          # ...then show our own card after this long
         close_to_tray          = $true
     }
 }
@@ -287,6 +288,7 @@ $Engine = {
     $ShowArt    = [bool]$S.show_album_art
     $ShowApps   = [bool]$S.show_current_app
     $OfficialToDiscord = [bool]$S.official_to_discord
+    $OfficialDelayMin  = [double]$(if ($null -ne $S.official_delay_minutes) { $S.official_delay_minutes } else { 2 })
     foreach ($pair in @(@('game', $GameId), @('music', $MusicId), @('app', $AppId))) {
         if ($pair[1] -notmatch '^\d{17,20}$') { Log "The $($pair[0]) Discord app ID isn't valid (17-20 digits). Fix it under Music & Apps > Advanced."; return }
     }
@@ -505,8 +507,12 @@ public static class RPFG {
     function Update-GameCards($running) {
         $wanted = @{}
         foreach ($r in $running) {
-            # Discord detects its official games itself; our card would replace its own (and its streaks)
-            if ($OfficialToDiscord -and $r.G.discordId) { continue }
+            # Discord detects its official games itself: give it a head start so the session counts for
+            # Recent Activity and streaks, then show our own card (with extras like the Genshin stats)
+            if ($OfficialToDiscord -and $r.G.discordId) {
+                $startMs = Get-GameStartMs $r.G $r.P
+                if (([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $startMs) -lt ($OfficialDelayMin * 60000)) { continue }
+            }
             # official Discord app if we know one, otherwise the shared generic game app
             $cid = if ($r.G.discordId) { "$($r.G.discordId)" } else { $GameId }
             if (-not $wanted.ContainsKey($cid)) { $wanted[$cid] = $r }
@@ -864,7 +870,7 @@ $chkAutoStart = New-Check $pSettings 'Start the presence when RichPresence opens
 $chkExit      = New-Check $pSettings 'Quit RichPresence when the game I launched closes' 274
 $chkTray      = New-Check $pSettings 'Closing the window keeps it running in the tray' 302
 $chkWin       = New-Check $pSettings 'Start with Windows' 330
-$chkOfficial  = New-Check $pSettings 'Let Discord show official games itself (keeps Recent Activity and streaks; no Genshin stats line)' 358
+$chkOfficial  = New-Check $pSettings 'Let Discord detect official games first (keeps streaks), then show my card after 2 minutes' 358
 $btnSave = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Save && rescan'; Location = (Pt 24 404); Size = (Sz 140 34) }
 Style-Button $btnSave $true
 $linkGuide = New-Ctl System.Windows.Forms.LinkLabel $pSettings @{ Text = 'Help & source on GitHub'; UseMnemonic = $false; Location = (Pt 24 458); AutoSize = $true; LinkColor = $cAccent }

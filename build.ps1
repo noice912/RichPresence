@@ -21,6 +21,6 @@ Invoke-ps2exe `
     -noConsole -STA `
     -title 'RichPresence' -product 'RichPresence' `
     -description 'Genshin Impact launcher with Discord Rich Presence' `
-    -version '1.1.1.0'
+    -version '1.2.0.0'
 
 Write-Host "Built: $(Join-Path $dist 'RichPresence.exe')"

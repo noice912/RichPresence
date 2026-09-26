@@ -13,8 +13,28 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    env:
+      SDK_TOKEN: ${{ secrets.SDK_REPO_TOKEN }}
     steps:
       - uses: actions/checkout@v5
+
+      # Discord's SDK can't be in this public repo; with it, the APK can link a Discord account.
+      - name: Get Discord's SDK (private repo)
+        if: env.SDK_TOKEN != ''
+        uses: actions/checkout@v5
+        with:
+          repository: noice912/RichPresence-sdk
+          token: ${{ secrets.SDK_REPO_TOKEN }}
+          path: private-sdk
+
+      - name: Put the SDK in place
+        run: |
+          if [ -f private-sdk/android/discord_partner_sdk.aar ]; then
+            cp -R private-sdk/android/. android/sdk/
+            echo "Building with Discord linking"
+          else
+            echo "::warning title=Android::Discord's SDK isn't available (SDK_REPO_TOKEN), so this APK can't link Discord."
+          fi
 
       - uses: actions/setup-java@v4
         with:

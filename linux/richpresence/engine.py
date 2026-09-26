@@ -164,7 +164,14 @@ class Engine(threading.Thread):
     # ------------------------------------------------ the three cards
     def update_games(self, running):
         wanted = {}
+        delay = float(self.s.get('official_delay_minutes') or 0) * 60
         for g, pid in running:
+            # Discord detects its official games itself: give it a head start so the session counts for
+            # Recent Activity and streaks, then show our own card
+            if self.s.get('official_to_discord') and g.get('discordId'):
+                start = system.process_start_ms(pid) or self.first_seen.setdefault(g['id'], int(time.time() * 1000))
+                if time.time() * 1000 - start < delay * 1000:
+                    continue
             cid = str(g['discordId']) if g.get('discordId') else S.GAME_ID
             wanted.setdefault(cid, (g, pid))
         for cid, (g, pid) in wanted.items():

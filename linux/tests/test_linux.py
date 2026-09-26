@@ -138,7 +138,17 @@ def accept():
 threading.Thread(target=accept, daemon=True).start()
 check('finds the Discord socket', discord_ipc.find_sockets() == [str(sock_path)], discord_ipc.find_sockets())
 
-s = dict(S.load(), show_music=False, show_current_app=False)
+# a game Discord knows is held back for 2 minutes so Discord's own detection (and streaks) counts first
+held = E.Engine(dict(S.load(), official_to_discord=True, official_delay_minutes=2), E.State())
+before = len(received)
+held.update_games([(dict(by['Duck Quest'], enabled=True), p.pid)])
+check('an official game is left to Discord for the first 2 minutes', len(received) == before and not held.game_conns)
+held.s['official_delay_minutes'] = 0
+held.update_games([(dict(by['Duck Quest'], enabled=True), p.pid)])
+check('...and then gets our own card', len(received) > before and received[-1][1] and received[-1][1].get('name') == 'Duck Quest')
+held.close_all()
+
+s = dict(S.load(), show_music=False, show_current_app=False, official_to_discord=False)
 st = E.State()
 st.games = E.engine_games(games, s)
 eng = E.Engine(s, st)
