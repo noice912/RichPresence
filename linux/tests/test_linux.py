@@ -151,15 +151,19 @@ held.close_all()
 s = dict(S.load(), show_music=False, show_current_app=False, official_to_discord=False)
 st = E.State()
 st.games = E.engine_games(games, s)
+mark = len(received)   # only look at cards this engine sends
 eng = E.Engine(s, st)
 eng.start()
 deadline = time.time() + 15
-while time.time() < deadline and not any(a and a.get('name') == 'Duck Quest' for _, a in received):
+while time.time() < deadline and not any(a and a.get('name') == 'Duck Quest' for _, a in received[mark:]):
     time.sleep(0.2)
-hit = next(((c, a) for c, a in received if a and a.get('name') == 'Duck Quest'), None)
+hit = next(((c, a) for c, a in received[mark:] if a and a.get('name') == 'Duck Quest'), None)
 check('shows "Playing Duck Quest" on Discord', hit is not None, received)
 check('...on the game\'s own Discord app', hit and hit[0] == '111111111111111111')
 check('...with the real start time', hit and abs(hit[1]['timestamps']['start'] - system.process_start_ms(p.pid)) < 2000)
+deadline = time.time() + 6
+while time.time() < deadline and 'Playing Duck Quest' not in st.status:
+    time.sleep(0.2)
 check('the status line says so', 'Playing Duck Quest' in st.status, st.status)
 
 p.kill()
