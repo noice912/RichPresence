@@ -74,6 +74,10 @@ struct ContentView: View {
                     }
                 }
 
+                Section {
+                    LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+                }
+
                 Section("Log") {
                     ForEach(Array(model.log.suffix(40).enumerated().reversed()), id: \.offset) { _, line in
                         Text(line).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
