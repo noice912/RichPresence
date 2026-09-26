@@ -517,7 +517,7 @@ class App:
         elif u['state'] == 'available':
             self.update_lbl.configure(text=f"Version {u['latest']} is out - download it from GitHub")
         elif u['state'] == 'failed':
-            self.update_lbl.configure(text=f'Version {__version__} - couldn't check (see Log)')
+            self.update_lbl.configure(text=f"Version {__version__} - couldn't check (see Log)")
         elif u['state'] == 'ready':
             self.update_lbl.configure(text=f"Version {u['latest']} is ready")
             self.btn_update.configure(text='Restart to update')
