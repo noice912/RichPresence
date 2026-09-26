@@ -30,8 +30,7 @@ jobs:
         working-directory: linux
         run: |
           python -m pip install --quiet jeepney
-          python tests/test_linux.py > test.log 2>&1 || { cat test.log; tail -n 30 test.log | tr "
-" " " | cut -c1-3000 | sed "s/^/::error title=tests::/"; exit 1; }
+          python tests/test_linux.py > test.log 2>&1 || { cat test.log; tail -n 30 test.log | tr '\n' ' ' | cut -c1-3000 | sed 's/^/::error title=tests::/'; exit 1; }
           cat test.log
 
       - name: Build AppImage and .deb
