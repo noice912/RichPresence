@@ -31,6 +31,25 @@ struct ClearGameIntent: AppIntent {
     }
 }
 
+/// "Update game on Discord": for ONE automation with several apps selected and both "Is Opened" and
+/// "Is Closed" ticked. Put the automation's Shortcut Input in "App": opening a game shows it, and the
+/// same game closing clears it.
+struct UpdateGameIntent: AppIntent {
+    static var title: LocalizedStringResource = "Update game on Discord"
+    static var description = IntentDescription("Shows the app that just opened, or clears it when that app closes. Use it in one automation with all your games selected, and pass in the Shortcut Input.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "App", description: "Set this to Shortcut Input") var app: String?
+
+    static var parameterSummary: some ParameterSummary { Summary("Update Discord with \(\.$app)") }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        Model.shared.toggleGame(app)
+        return .result()
+    }
+}
+
 struct RichPresenceShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: ShowGameIntent(), phrases: ["Show my game on \(.applicationName)"],

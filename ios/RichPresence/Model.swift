@@ -172,6 +172,17 @@ final class Model: ObservableObject {
         push(force: true)
     }
 
+    /// From the multi-app automation: the same app arriving again means it closed.
+    func toggleGame(_ raw: String?) {
+        let name = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        say("Automation passed in: \(name.isEmpty ? "nothing" : "\"\(name)\"")")
+        guard !name.isEmpty else {
+            say("No app name was passed in. Set the action's App field to Shortcut Input, or use one automation per game.")
+            return
+        }
+        if game?.lowercased() == name.lowercased() { clearGame() } else { showGame(name) }
+    }
+
     func clearGame() {
         guard game != nil else { return }
         say("Game closed")
