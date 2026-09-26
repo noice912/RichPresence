@@ -31,6 +31,7 @@ $DefaultGameId  = '1552433095335215165'   # "RP 2" - card for games that have no
 $DefaultMusicId = '1552437427828818050'   # "RP 3" - Apple Music card
 $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
+$AppVersion   = '1.2.1'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -51,6 +52,7 @@ function New-DefaultSettings {
         start_with_windows     = $false
         official_to_discord    = $true      # let Discord detect games it knows first (keeps Recent Activity / streaks)
         official_delay_minutes = 2          # ...then show our own card after this long
+        auto_update            = $true      # install new releases by itself (never while a game is running)
         close_to_tray          = $true
     }
 }
@@ -694,12 +696,47 @@ public static class RPFG {
 }
 
 # ===========================================================================
+# UPDATER - runs on a background runspace. Looks at the latest GitHub release and, if it's newer,
+# downloads RichPresence.exe and checks it against the SHA-256 GitHub publishes for it.
+# ===========================================================================
+$Updater = {
+    param($Sync, $Current, $DataDir)
+    $ErrorActionPreference = 'Stop'
+    function Log($m) { $Sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m)) }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/noice912/RichPresence/releases/latest' -Headers @{ 'User-Agent' = 'RichPresence updater' } -TimeoutSec 20
+        $latest = "$($rel.tag_name)".TrimStart('v')
+        $Sync.LatestVersion = $latest
+        if ([version]$latest -le [version]$Current) { $Sync.UpdateState = 'current'; return }
+        $asset = @($rel.assets) | Where-Object { $_.name -eq 'RichPresence.exe' } | Select-Object -First 1
+        if (-not $asset) { $Sync.UpdateState = 'current'; return }
+        $dir = Join-Path $DataDir 'update'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $file = Join-Path $dir "RichPresence-$latest.exe"
+        Log "Downloading update $latest..."
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $file -UseBasicParsing -Headers @{ 'User-Agent' = 'RichPresence updater' } -TimeoutSec 120
+        $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+        $want = "$($asset.digest)" -replace '^sha256:', ''
+        if (-not $want) { Remove-Item $file -Force; Log "Update $latest has no published checksum, so it wasn't installed."; $Sync.UpdateState = 'failed'; return }
+        if ($hash -ne $want.ToLower()) { Remove-Item $file -Force; Log "Update $latest didn't match its checksum and was deleted."; $Sync.UpdateState = 'failed'; return }
+        $Sync.UpdateFile = $file
+        $Sync.UpdateState = 'ready'
+        Log "Update $latest downloaded and verified."
+    } catch {
+        $Sync.UpdateState = 'failed'
+        Log "Couldn't check for updates: $($_.Exception.Message)"
+    }
+}
+
+# ===========================================================================
 # Runner helpers
 # ===========================================================================
 function New-Sync {
     [hashtable]::Synchronized(@{
         Stop = $false; Queue = (New-Object System.Collections.Concurrent.ConcurrentQueue[string])
         Status = 'Stopped'; Games = @(); RunningIds = @(); WatchId = $null; GameExited = $false; ScanDone = $false; AppLabel = ''
+        UpdateState = ''; UpdateFile = $null; LatestVersion = ''
     })
 }
 function Start-Block($block, $arguments) {
@@ -871,9 +908,13 @@ $chkExit      = New-Check $pSettings 'Quit RichPresence when the game I launched
 $chkTray      = New-Check $pSettings 'Closing the window keeps it running in the tray' 302
 $chkWin       = New-Check $pSettings 'Start with Windows' 330
 $chkOfficial  = New-Check $pSettings 'Let Discord detect official games first (keeps streaks), then show my card after 2 minutes' 358
-$btnSave = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Save && rescan'; Location = (Pt 24 404); Size = (Sz 140 34) }
+$chkUpdate    = New-Check $pSettings 'Install updates automatically (never while a game is running)' 386
+$btnSave = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Save && rescan'; Location = (Pt 24 426); Size = (Sz 140 34) }
+$btnUpdate = New-Ctl System.Windows.Forms.Button $pSettings @{ Text = 'Check for updates'; Location = (Pt 174 426); Size = (Sz 150 34) }
+Style-Button $btnUpdate $false
+$updateLbl = New-Ctl System.Windows.Forms.Label $pSettings @{ Text = "Version $AppVersion"; ForeColor = $cDim; Location = (Pt 334 436); AutoSize = $true }
 Style-Button $btnSave $true
-$linkGuide = New-Ctl System.Windows.Forms.LinkLabel $pSettings @{ Text = 'Help & source on GitHub'; UseMnemonic = $false; Location = (Pt 24 458); AutoSize = $true; LinkColor = $cAccent }
+$linkGuide = New-Ctl System.Windows.Forms.LinkLabel $pSettings @{ Text = 'Help & source on GitHub'; UseMnemonic = $false; Location = (Pt 24 476); AutoSize = $true; LinkColor = $cAccent }
 
 # ---- Log page
 $log = New-Ctl System.Windows.Forms.TextBox $pLog @{ Dock = 'Fill'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; BackColor = $cCard; ForeColor = $cText; BorderStyle = 'None'; Font = (New-Object System.Drawing.Font('Consolas', 9)) }
@@ -887,6 +928,7 @@ function Apply-ToUi {
     $chkAutoStart.Checked = [bool]$Settings.start_presence_on_open; $chkExit.Checked = [bool]$Settings.exit_when_game_closes
     $chkTray.Checked = [bool]$Settings.close_to_tray; $chkWin.Checked = [bool]$Settings.start_with_windows
     $chkOfficial.Checked = [bool]$Settings.official_to_discord
+    $chkUpdate.Checked = [bool]$Settings.auto_update
 }
 function Read-FromUi {
     $Settings.genshin_uid = $txtUid.Text.Trim()
@@ -896,6 +938,7 @@ function Read-FromUi {
     $Settings.start_presence_on_open = $chkAutoStart.Checked; $Settings.exit_when_game_closes = $chkExit.Checked
     $Settings.close_to_tray = $chkTray.Checked; $Settings.start_with_windows = $chkWin.Checked
     $Settings.official_to_discord = $chkOfficial.Checked
+    $Settings.auto_update = $chkUpdate.Checked
     Save-Settings $Settings
 }
 function Append-Log($line) {
@@ -1076,6 +1119,42 @@ $btnAdd.add_Click({
 $txtSearch.add_TextChanged({ Rebuild-Tiles })
 $chkWin.add_CheckedChanged({ try { Set-StartupShortcut $chkWin.Checked } catch {} })
 $linkGuide.add_Click({ Start-Process $RepoUrl })
+
+# ---- updates
+$script:UpdateJob = $null
+$script:NextUpdateCheck = [datetime]::MaxValue
+function Start-UpdateCheck {
+    if ($script:UpdateJob -and -not $script:UpdateJob.Handle.IsCompleted) { return }
+    if ($script:UpdateJob) { Stop-Block $script:UpdateJob $null 0 }
+    $Sync.UpdateState = 'checking'
+    $updateLbl.Text = "Version $AppVersion - checking for updates..."
+    $script:UpdateJob = Start-Block $Updater @($Sync, $AppVersion, $DataDir)
+    $script:NextUpdateCheck = (Get-Date).AddHours(6)
+}
+# The running EXE can't overwrite itself: a tiny helper waits for this process to exit,
+# swaps the file in, and starts the new version.
+function Install-Update {
+    $new = $Sync.UpdateFile
+    if (-not $new -or -not (Test-Path $new)) { return }
+    if (-not $IsExe) { $updateLbl.Text = "Version $($Sync.LatestVersion) is available on GitHub (running as a script, so update by hand)."; return }
+    $helper = Join-Path (Split-Path $new) 'apply-update.cmd'
+    @"
+@echo off
+:wait
+tasklist /FI "PID eq $PID" 2>nul | find "$PID" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)
+copy /y "$new" "$SelfPath" >nul || goto done
+del "$new" >nul 2>&1
+:done
+start "" "$SelfPath"
+"@ | Set-Content -Path $helper -Encoding ASCII
+    Append-Log ("[{0}] Installing update {1} and restarting..." -f (Get-Date -Format 'HH:mm:ss'), $Sync.LatestVersion)
+    Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$helper`"" -WindowStyle Hidden
+    $script:reallyQuit = $true
+    $form.Close()
+}
+$btnUpdate.add_Click({
+    if ($Sync.UpdateState -eq 'ready') { Install-Update } else { Start-UpdateCheck }
+})
 $form.add_FormClosing({
     param($s, $e)
     if ($Settings.close_to_tray -and -not $script:reallyQuit -and $e.CloseReason -eq 'UserClosing') {
@@ -1094,6 +1173,18 @@ $timer.Interval = 500
 $timer.add_Tick({
     $line = $null
     while ($Sync.Queue.TryDequeue([ref]$line)) { Append-Log $line }
+
+    # updates: check every 6 hours; install when ready unless a game is running (or it's set to ask)
+    if ((Get-Date) -ge $script:NextUpdateCheck) { Start-UpdateCheck }
+    switch ($Sync.UpdateState) {
+        'current' { $updateLbl.Text = "Version $AppVersion - up to date"; $btnUpdate.Text = 'Check for updates'; $Sync.UpdateState = 'shown' }
+        'failed'  { $updateLbl.Text = "Version $AppVersion - couldn't check (see Log)"; $Sync.UpdateState = 'shown' }
+        'ready' {
+            $updateLbl.Text = "Version $($Sync.LatestVersion) is ready"
+            $btnUpdate.Text = 'Restart to update'
+            if ($Settings.auto_update -and @($Sync.RunningIds).Count -eq 0) { $Sync.UpdateState = 'installing'; Install-Update }
+        }
+    }
 
     if ($Sync.ScanDone -and $script:ScanJob) {
         $Sync.ScanDone = $false
@@ -1129,6 +1220,7 @@ $timer.Start()
 
 $form.add_Shown({
     Start-Scan
+    $script:NextUpdateCheck = (Get-Date).AddSeconds(20)   # first check shortly after opening
     if ($Settings.start_presence_on_open -or $script:PendingPlay) { Start-Presence }
     if ($script:PendingPlay -and $script:Library.Count) {
         $g = $script:Library | Where-Object { $_.id -eq $script:PendingPlay } | Select-Object -First 1

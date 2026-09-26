@@ -11,6 +11,10 @@ if (-not (Get-Module -ListAvailable ps2exe)) {
 }
 Import-Module ps2exe
 
+# the version lives in the script ($AppVersion), so the EXE and the updater always agree
+$ver = [regex]::Match((Get-Content (Join-Path $root 'src\RichPresence.ps1') -Raw), '\$AppVersion\s*=\s*''([0-9.]+)''').Groups[1].Value
+if (-not $ver) { throw 'AppVersion not found in src\RichPresence.ps1' }
+
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
@@ -21,6 +25,6 @@ Invoke-ps2exe `
     -noConsole -STA `
     -title 'RichPresence' -product 'RichPresence' `
     -description 'Genshin Impact launcher with Discord Rich Presence' `
-    -version '1.2.0.0'
+    -version "$ver.0"
 
 Write-Host "Built: $(Join-Path $dist 'RichPresence.exe')"
