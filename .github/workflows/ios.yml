@@ -7,6 +7,9 @@ on:
     paths: ['ios/**', '.github/workflows/ios.yml']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   ios:
     runs-on: macos-15
@@ -56,6 +59,34 @@ jobs:
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM= 2>&1 | tee build.log | grep -E "error:|warning: .*RichPresence|BUILD" || true
           grep -q "BUILD SUCCEEDED" build.log || { grep -E "error:" build.log | head -20 | sed 's/^/::error title=xcode::/'; exit 1; }
+
+      # An unsigned app file for sideloading (Sideloadly/AltStore sign it with the person's own Apple ID).
+      - name: Build the .ipa for sideloading
+        if: steps.sdk.outputs.ok == 'true'
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build -project RichPresence.xcodeproj -scheme RichPresence -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= 2>&1 | tee device.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" device.log || { grep -E "error:" device.log | head -20 | sed 's/^/::error title=xcode::/'; exit 1; }
+          APP=$(find "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -1)
+          [ -f "$APP/Frameworks/discord_partner_sdk.framework/discord_partner_sdk" ] || { echo "::error title=ipa::Discord's framework is missing from the app"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" && cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/RichPresence-ios-sideload.ipa" Payload)
+          ls -la "$GITHUB_WORKSPACE/RichPresence-ios-sideload.ipa"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.sdk.outputs.ok == 'true'
+        with:
+          name: RichPresence-ios-sideload
+          path: RichPresence-ios-sideload.ipa
+
+      - name: Attach to release
+        if: steps.sdk.outputs.ok == 'true' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RichPresence-ios-sideload.ipa
 
       # With the App Store Connect key, sign the app and send it to TestFlight.
       - name: Archive, sign and upload to TestFlight
