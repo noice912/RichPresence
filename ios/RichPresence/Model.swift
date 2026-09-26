@@ -54,6 +54,17 @@ final class Model: ObservableObject {
         didSet { UserDefaults.standard.set(showMusic, forKey: "show_music"); push(force: true) }
     }
     @Published var track: Track?
+    /// Keep running in the background so a new song is noticed without opening the app.
+    @Published var background = UserDefaults.standard.object(forKey: "background") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(background, forKey: "background"); updateAwake() }
+    }
+    @Published var showLyrics = UserDefaults.standard.object(forKey: "show_lyrics") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showLyrics, forKey: "show_lyrics"); push(force: true) }
+    }
+    @Published var lyricLine: String?
+    private var lyricsCache: [String: [(TimeInterval, String)]] = [:]
+    private var lyricsLoading: Set<String> = []
+    private var lyricTimer: Timer?
     // saved, so lines written while iOS ran the app in the background (Shortcuts) are still there later
     @Published var log: [String] = UserDefaults.standard.stringArray(forKey: "log") ?? []
 
@@ -83,6 +94,7 @@ final class Model: ObservableObject {
             self.say("Signed in to Discord as \(name)")
             self.lastSent = nil
             self.push(force: true)
+            self.updateAwake()
         }
         discord.onDisconnected = { [weak self] reason in
             self?.connected = false
@@ -101,8 +113,74 @@ final class Model: ObservableObject {
                 MainActor.assumeIsolated { self?.refreshTrack() }
             }
         }
+        // the current lyric line, checked every second while a song plays
+        lyricTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickLyrics() }
+        }
+        // another app taking over the audio (a call, a game) pauses the silent sound; start it again after
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+            MainActor.assumeIsolated {
+                guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+                self?.keepAlive?.play()
+            }
+        }
         signInSaved()
         refreshTrack()
+        updateAwake()
+    }
+
+    /// Stay running while a game is showing, or all the time when "Keep running in the background" is on.
+    func updateAwake() {
+        stayAwake(game != nil || (background && linkedName != nil))
+    }
+
+    // ------------------------------------------------ lyrics (lrclib.net, like the Windows version)
+    private func tickLyrics() {
+        guard showLyrics, let t = track else {
+            if lyricLine != nil { lyricLine = nil }
+            return
+        }
+        let key = "\(t.artist)|\(t.title)|\(t.album)"
+        guard let lines = lyricsCache[key] else { loadLyrics(t, key: key); return }
+        let pos = MPMusicPlayerController.systemMusicPlayer.currentPlaybackTime
+        let line = lines.last(where: { $0.0 <= pos + 0.3 })?.1
+        let clean = (line?.isEmpty ?? true) ? nil : String(line!.prefix(128))
+        guard clean != lyricLine else { return }
+        lyricLine = clean
+        // Discord limits how often a status can change, so lines at most every 4 seconds
+        if game == nil && Date().timeIntervalSince(sentAt) >= 4 { push(force: true) }
+    }
+
+    private func loadLyrics(_ t: Track, key: String) {
+        guard !lyricsLoading.contains(key) else { return }
+        lyricsLoading.insert(key)
+        var c = URLComponents(string: "https://lrclib.net/api/get")!
+        c.queryItems = [.init(name: "artist_name", value: t.artist), .init(name: "track_name", value: t.title)]
+        if !t.album.isEmpty { c.queryItems?.append(.init(name: "album_name", value: t.album)) }
+        if t.duration > 0 { c.queryItems?.append(.init(name: "duration", value: String(Int(t.duration)))) }
+        var req = URLRequest(url: c.url!)
+        req.setValue("RichPresence (personal use)", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            var lines: [(TimeInterval, String)] = []
+            if let data, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let synced = j["syncedLyrics"] as? String {
+                let re = try! NSRegularExpression(pattern: "^\\[(\\d+):(\\d+(?:\\.\\d+)?)\\](.*)$")
+                for raw in synced.split(separator: "\n") {
+                    let s = String(raw)
+                    guard let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+                          let mm = Range(m.range(at: 1), in: s), let ss = Range(m.range(at: 2), in: s),
+                          let tx = Range(m.range(at: 3), in: s) else { continue }
+                    lines.append(((Double(s[mm]) ?? 0) * 60 + (Double(s[ss]) ?? 0),
+                                  s[tx].trimmingCharacters(in: .whitespaces)))
+                }
+            }
+            Task { @MainActor in
+                self.lyricsCache[key] = lines.sorted { $0.0 < $1.0 }
+                self.lyricsLoading.remove(key)
+                if lines.isEmpty { self.say("No synced lyrics found for \(t.title)") }
+            }
+        }.resume()
     }
 
     func say(_ m: String) {
@@ -159,6 +237,7 @@ final class Model: ObservableObject {
         }
         if t?.title != track?.title || t?.artist != track?.artist {
             if let t { say("Music: \(t.artist) - \(t.title)") }
+            lyricLine = nil
         }
         track = t
         push(force: false)
@@ -189,7 +268,7 @@ final class Model: ObservableObject {
         guard game != nil else { return }
         say("Game closed")
         game = nil
-        stayAwake(false)
+        updateAwake()
         push(force: true)
     }
 
@@ -262,7 +341,8 @@ final class Model: ObservableObject {
             if lastSent != nil { discord.clear(); lastSent = nil }
             return
         }
-        let sig = "\(t.artist)|\(t.title)|\(t.album)"
+        let lyric = showLyrics ? lyricLine : nil
+        let sig = "\(t.artist)|\(t.title)|\(t.album)|\(lyric ?? "")"
         if !force && sig == lastSent && Date().timeIntervalSince(sentAt) < 30 { return }
         lastSent = sig
         sentAt = Date()
@@ -272,8 +352,8 @@ final class Model: ObservableObject {
         artwork(for: t) { [weak self] art in
             // like the Windows card: "Listening to <artist>", song title on the first line
             let artist = t.artist.isEmpty ? "Apple Music" : String(t.artist.prefix(128))
-            self?.discord.update(withType: 2, name: artist, display: 1, details: String(t.title.prefix(128)),
-                                 state: artist,
+            self?.discord.update(withType: 2, name: artist, display: 0, details: String(t.title.prefix(128)),
+                                 state: lyric ?? (t.artist.isEmpty ? "Apple Music" : String("by \(t.artist)".prefix(128))),
                                  start: start, end: end, image: art,
                                  imageText: String((t.album.isEmpty ? t.title : "\(t.title) - \(t.album)").prefix(128)))
         }

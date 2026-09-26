@@ -44,10 +44,12 @@ struct ContentView: View {
                         Button("Allow Apple Music access") { model.askForMusic() }
                     }
                     Toggle("Show what I'm listening to", isOn: $model.showMusic)
+                    Toggle("Show live lyrics", isOn: $model.showLyrics)
+                    Toggle("Keep running in the background", isOn: $model.background)
                 } header: {
                     Text("Apple Music")
                 } footer: {
-                    Text("iOS only lets apps see Apple Music, not other players or games. It updates while RichPresence is open or was used recently.")
+                    Text("iOS only lets apps see Apple Music, not other players. With \"Keep running in the background\" on, RichPresence plays a silent sound so iOS keeps it running and new songs show up without opening the app. It uses a little more battery.")
                 }
 
                 Section {
@@ -68,6 +70,9 @@ struct ContentView: View {
                         VStack(alignment: .leading) {
                             Text(t.title).bold()
                             Text(t.artist).foregroundStyle(.secondary)
+                            if let line = model.lyricLine {
+                                Text(line).italic().foregroundStyle(accent).padding(.top, 2)
+                            }
                         }
                     } else {
                         Text("Nothing playing in Apple Music").foregroundStyle(.secondary)
