@@ -17,6 +17,7 @@ final class Spotify: NSObject, ObservableObject, ASWebAuthenticationPresentation
     private var expires = UserDefaults.standard.object(forKey: "spotify_expires") as? Date ?? .distantPast
     private var session: ASWebAuthenticationSession?
     private var lastProblem: String?
+    private var checkedOnce = false
     private let say: (String) -> Void
 
     init(say: @escaping (String) -> Void) { self.say = say }
@@ -34,10 +35,15 @@ final class Spotify: NSObject, ObservableObject, ASWebAuthenticationPresentation
             Task { @MainActor in
                 guard let self else { return }
                 self.linking = false
-                guard let url, let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                        .queryItems?.first(where: { $0.name == "code" })?.value else {
-                    if let error, (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
-                        self.say("Spotify: linking failed (\(error.localizedDescription))")
+                let items = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
+                guard let code = items.first(where: { $0.name == "code" })?.value else {
+                    if let why = items.first(where: { $0.name == "error" })?.value {
+                        // e.g. access_denied: your Spotify account isn't allowed in this development app
+                        self.say("Spotify: linking refused by Spotify (\(why)). Check User Management in the Spotify dashboard.")
+                    } else if let error, (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                        self.say("Spotify: linking cancelled")
+                    } else {
+                        self.say("Spotify: linking failed (\(error?.localizedDescription ?? "no sign-in code came back"))")
                     }
                     return
                 }
@@ -97,12 +103,26 @@ final class Spotify: NSObject, ObservableObject, ASWebAuthenticationPresentation
         if access == nil || Date() > expires, let r = Keychain.get("spotify_refresh") {
             await token(["grant_type": "refresh_token", "refresh_token": r])
         }
-        guard let access else { return nil }
+        guard let access else {
+            if lastProblem != "noaccess" { lastProblem = "noaccess"; say("Spotify: no working sign-in; tap Unlink, then Link Spotify again") }
+            return nil
+        }
+        if lastProblem == nil && !checkedOnce { checkedOnce = true; say("Spotify: checking what's playing on your account...") }
         var req = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/currently-playing")!)
         req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
+        let result: (Data, URLResponse)
+        do { result = try await URLSession.shared.data(for: req) } catch {
+            let line = "Spotify: couldn't reach Spotify (\(error.localizedDescription))"
+            if line != lastProblem { lastProblem = line; say(line) }
+            return nil
+        }
+        let (data, resp) = result
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 401 { expires = .distantPast; return nil }
+        if code == 401 {
+            if lastProblem != "401" { lastProblem = "401"; say("Spotify: sign-in expired, renewing it") }
+            expires = .distantPast
+            return nil
+        }
         if code != 200 && code != 204 {
             // say why once per kind of problem (403 usually means the account isn't allowed in development mode)
             let why = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])

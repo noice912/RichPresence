@@ -65,7 +65,7 @@ struct ContentView: View {
                     if let t = model.track {
                         VStack(alignment: .leading) {
                             Text(t.title).bold()
-                            Text(t.artist).foregroundStyle(.secondary)
+                            Text("(t.artist)  ·  (t.source)").foregroundStyle(.secondary)
                             if let line = model.lyricLine {
                                 Text(line).italic().foregroundStyle(accent).padding(.top, 2)
                             }
