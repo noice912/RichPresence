@@ -66,10 +66,32 @@ The tray icon needs a desktop with a system tray (KDE, Cinnamon, XFCE, or GNOME 
 | **Games tab** | Every detected game is a tile. **Play** launches it. Untick **Show on Discord** to hide a game. Right-click a tile for *Create desktop shortcut* or *Open install folder*. |
 | **Missing a game?** | Click **+ Add game** and pick its `.exe`, or add a folder in **Settings** (each sub-folder counts as a game), then **Rescan**. |
 | **Music & Apps tab** | Turn Apple Music, lyrics, album art and the "current app" card on or off. |
+| **Custom status tab** | Make your own cards with your own text, pictures and buttons. See [Custom status](#custom-status-windows). |
 | **Settings tab** | Optional Genshin UID, extra game folders, start with Windows, tray behavior. |
 | **Log tab** | What the app is doing, which is handy if something looks off. |
 
 Your settings are stored in `%APPDATA%\RichPresence`. Delete that folder to reset everything.
+
+## Custom status (Windows)
+
+The **Custom status** tab lets you make your own Discord cards. Each one has:
+
+- **Shows as**: Playing, Listening to, Watching or Competing in
+- a **title** and **two lines** of text
+- a **big picture** and an optional **small round picture**, each with hover text
+- up to **two buttons** with links. Other people see them, but Discord hides your own buttons from you.
+- an optional "how long it's been on" timer
+
+Make as many as you like and tick the ones to show. Then pick how they appear:
+
+- **Each one is its own card.** Every ticked status gets a separate card. RichPresence has **2** built-in cards for this. To show more, give the extra statuses their own App ID (below).
+- **Merge them into one card.** The ticked statuses become a single card. It uses the top one's title, type and big picture, joins all their lines together, and turns the next picture into the small round one. Use **Up/Down** to choose the order.
+
+**Pictures** must be `https://` links to an image (for example from imgur). Don't use links to images uploaded *in Discord*: those expire after about a day.
+
+**Your own App ID (optional).** Discord shows the card's title as the name of the Discord app behind it. For a title of your own, create a free app at [discord.com/developers/applications](https://discord.com/developers/applications), name it what you want the card to say, and paste its **Application ID** into the status. You can then upload pictures under **Rich Presence → Art Assets** and type a picture's name in place of a link.
+
+If Discord rejects a card (for example because a link is broken), the reason appears in the **Log** tab.
 
 ## Genshin Impact stats (optional)
 
@@ -90,6 +112,7 @@ This reads your public profile from [Enka.Network](https://enka.network) (no log
 | **Game** | A process from your library is running. Uses that game's official Discord app if Discord has one, otherwise a generic "game" card. |
 | **Music** | The Microsoft Store **Apple Music** app is playing. |
 | **App** | You're focused on another program (VS Code, Chrome, ...). Kept for a few minutes when you alt-tab to Discord. |
+| **Custom** | Whichever custom statuses you ticked (Windows). |
 
 Discord shows one activity per Discord application, so each card uses its own application. Those IDs are built into the app. They're public identifiers, not secrets, and presence is set by *your* Discord client, so thousands of people can share them without ever overlapping.
 

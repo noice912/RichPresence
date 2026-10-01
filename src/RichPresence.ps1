@@ -30,8 +30,10 @@ $LibraryPath  = Join-Path $DataDir 'library.json'
 $DefaultGameId  = '1552433095335215165'   # "RP 2" - card for games that have no official Discord app of their own
 $DefaultMusicId = '1552437427828818050'   # "RP 3" - Apple Music card
 $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
+# built-in apps that custom statuses can borrow when the user hasn't made their own Discord app (one card each)
+$CustomPoolIds  = @('1553178514365358100', '1553247468957990943')
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
-$AppVersion   = '1.2.1'     # build.ps1 reads this; bump it for every release
+$AppVersion   = '1.3.0'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -54,6 +56,8 @@ function New-DefaultSettings {
         official_delay_minutes = 2          # ...then show our own card after this long
         auto_update            = $true      # install new releases by itself (never while a game is running)
         close_to_tray          = $true
+        custom_statuses        = @()        # your own cards: text, pictures, buttons (see the Custom status page)
+        custom_mode            = 'separate' # 'separate' = one card each, 'merge' = the ticked ones become one card
     }
 }
 function Load-Settings {
@@ -64,7 +68,8 @@ function Load-Settings {
             foreach ($k in @($s.Keys)) { if ($null -ne $j.$k) { $s[$k] = $j.$k } }
         } catch {}
     }
-    foreach ($k in 'disabled_games', 'extra_folders', 'custom_games') { $s[$k] = @($s[$k]) }
+    foreach ($k in 'disabled_games', 'extra_folders', 'custom_games', 'custom_statuses') { $s[$k] = @($s[$k] | Where-Object { $null -ne $_ }) }
+    if ($s.custom_mode -notin 'separate', 'merge') { $s.custom_mode = 'separate' }
     return $s
 }
 # The Discord app IDs are fixed in the program - they are never read from (or written to) settings.
@@ -72,6 +77,7 @@ function Add-BuiltInIds($s) {
     $s['game_client_id']  = $DefaultGameId
     $s['music_client_id'] = $DefaultMusicId
     $s['app_client_id']   = $DefaultAppId
+    $s['custom_client_ids'] = $CustomPoolIds
     $s
 }
 function Save-Settings($s) { ($s | ConvertTo-Json -Depth 5) | Set-Content -Path $SettingsPath -Encoding UTF8 }
@@ -458,7 +464,7 @@ public static class RPFG {
     }
 
     # ---------------------------------------------------------------- Discord IPC (one connection per Discord app id)
-    function New-Conn($clientId, $name) { @{ Pipe = $null; ClientId = $clientId; Name = $name; Id = $null; SentUtc = [datetime]::MinValue } }
+    function New-Conn($clientId, $name) { @{ Pipe = $null; ClientId = $clientId; Name = $name; Id = $null; SentUtc = [datetime]::MinValue; LastErr = $null } }
     function Close-Discord($c) { try { if ($c.Pipe) { $c.Pipe.Dispose() } } catch {}; $c.Pipe = $null }
     function Send-Frame($c, [int]$op, [string]$json) {
         $data = [Text.Encoding]::UTF8.GetBytes($json)
@@ -495,7 +501,12 @@ public static class RPFG {
     }
     function Set-Activity($c, $activity) {
         Send-Frame $c 1 (@{ cmd = 'SET_ACTIVITY'; nonce = [guid]::NewGuid().ToString(); args = @{ pid = $PID; activity = $activity } } | ConvertTo-Json -Depth 8 -Compress)
-        Read-Frame $c | Out-Null
+        # Discord answers every command; a rejected card (bad picture link, bad button...) comes back as an ERROR
+        $r = Read-Frame $c
+        $err = $null
+        if ($r -and $r -match '"evt"\s*:\s*"ERROR"') { $err = $r; try { $err = "$(($r | ConvertFrom-Json).data.message)" } catch {} }
+        if ($err -and $err -ne $c.LastErr) { Log "Discord didn't accept the $($c.Name) card: $err" }
+        $c.LastErr = $err
     }
     function Clear-Activity($c) {
         Send-Frame $c 1 (@{ cmd = 'SET_ACTIVITY'; nonce = [guid]::NewGuid().ToString(); args = @{ pid = $PID } } | ConvertTo-Json -Depth 8 -Compress)
@@ -559,12 +570,135 @@ public static class RPFG {
     }
     function Test-DiscordRunning { [bool]([System.IO.Directory]::GetFiles('\\.\pipe\') -match 'discord-ipc-') }
 
+    # ---------------------------------------------------------------- custom statuses (your own text, pictures and buttons)
+    # Discord shows one card per Discord app, so every custom card needs its own app: the user's own App ID
+    # if they made one, otherwise one of the built-in ones (only a few). 'merge' folds the ticked ones into one card.
+    $CustomPool = @(@($S.custom_client_ids) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^\d{17,20}$' })
+    $CustomConns = @{}
+    $script:CustomStart = @{}; $script:CustomShown = 0; $script:CustomSkipped = @(); $script:CustomSkipLog = ''
+    $Dot = " $([char]0x00B7) "
+
+    function Limit-Text($t, $max) {
+        $t = "$t".Trim()
+        if ($t.Length -gt $max) { $t = $t.Substring(0, $max - 3) + '...' }
+        $t
+    }
+    function Get-CustomLabel($st) {
+        foreach ($v in $st.name, $st.details, $st.state) { if ("$v".Trim()) { return "$v".Trim() } }
+        'Custom status'
+    }
+    # a picture is an https link, or the name of a picture uploaded to the user's own Discord app
+    function Get-CustomImage($v) {
+        $v = "$v".Trim()
+        if ($v -match '^https://\S+$' -and $v.Length -le 256) { return $v }
+        if ($v -match '^[\w.-]{1,128}$') { return $v }
+        $null
+    }
+    function New-CustomActivity($st) {
+        $t = 0; try { $t = [int]$st.type } catch {}
+        $a = @{ type = $(if ($t -in 2, 3, 5) { $t } else { 0 }) }     # Playing / Listening to / Watching / Competing in
+        $v = Limit-Text $st.name 128;    if ($v.Length -ge 2) { $a.name = $v }
+        $v = Limit-Text $st.details 128; if ($v.Length -ge 2) { $a.details = $v }
+        $v = Limit-Text $st.state 128;   if ($v.Length -ge 2) { $a.state = $v }
+        $as = @{}
+        $img = Get-CustomImage $st.large_image
+        if ($img) { $as.large_image = $img; $v = Limit-Text $st.large_text 128; if ($v.Length -ge 2) { $as.large_text = $v } }
+        $img = Get-CustomImage $st.small_image
+        if ($img) { $as.small_image = $img; $v = Limit-Text $st.small_text 128; if ($v.Length -ge 2) { $as.small_text = $v } }
+        if ($as.Count) { $a.assets = $as }
+        $btn = @()
+        foreach ($n in 1, 2) {
+            $l = Limit-Text $st."button${n}_label" 32; $u = "$($st."button${n}_url")".Trim()
+            if ($l -and $u -match '^https?://\S+$' -and $u.Length -le 512) { $btn += @{ label = $l; url = $u } }
+        }
+        if ($btn.Count) { $a.buttons = $btn }
+        $a
+    }
+    # one card out of several: the first one's title, type and App ID; every line joined; the first picture
+    # becomes the big one and the next picture the small round one; the first two buttons found
+    function Merge-CustomStatuses($list) {
+        $first = $list[0]
+        $m = [ordered]@{
+            id = 'merged'; type = $first.type; name = $first.name; app_id = $first.app_id
+            elapsed = [bool]@($list | Where-Object { $_.elapsed }).Count
+            details = (@($list | ForEach-Object { "$($_.details)".Trim() } | Where-Object { $_ }) -join $Dot)
+            state   = (@($list | ForEach-Object { "$($_.state)".Trim() } | Where-Object { $_ }) -join $Dot)
+            large_image = ''; large_text = ''; small_image = "$($first.small_image)"; small_text = "$($first.small_text)"
+        }
+        $pics = @(foreach ($st in $list) { if (Get-CustomImage $st.large_image) { , @("$($st.large_image)", "$($st.large_text)") } })
+        if ($pics.Count) { $m.large_image = $pics[0][0]; $m.large_text = $pics[0][1] }
+        if (-not (Get-CustomImage $m.small_image) -and $pics.Count -gt 1) { $m.small_image = $pics[1][0]; $m.small_text = $pics[1][1] }
+        $n = 0
+        foreach ($st in $list) {
+            foreach ($k in 1, 2) {
+                $l = "$($st."button${k}_label")".Trim(); $u = "$($st."button${k}_url")".Trim()
+                if ($n -lt 2 -and $l -and $u -match '^https?://') { $n++; $m["button${n}_label"] = $l; $m["button${n}_url"] = $u }
+            }
+        }
+        New-Object psobject -Property $m
+    }
+    function Get-CustomCards($items, $mode) {
+        $on = @(@($items) | Where-Object { $_ -and $_.enabled })
+        if ($mode -eq 'merge' -and $on.Count -gt 1) { $on = @(Merge-CustomStatuses $on) }
+        # statuses with their own Discord app claim it first; the rest share the built-in ones
+        $own  = @($on | Where-Object { "$($_.app_id)".Trim() -match '^\d{17,20}$' })
+        $rest = @($on | Where-Object { "$($_.app_id)".Trim() -notmatch '^\d{17,20}$' })
+        $cards = @(); $used = @{}; $skipped = @(); $pi = 0
+        foreach ($st in ($own + $rest)) {
+            $cid = "$($st.app_id)".Trim()
+            if ($cid -notmatch '^\d{17,20}$') {
+                $cid = $null
+                while ($pi -lt $CustomPool.Count -and -not $cid) { if (-not $used.ContainsKey($CustomPool[$pi])) { $cid = $CustomPool[$pi] }; $pi++ }
+            }
+            if (-not $cid -or $used.ContainsKey($cid)) { $skipped += (Get-CustomLabel $st); continue }
+            $used[$cid] = $true
+            $cards += [pscustomobject]@{ AppId = $cid; Key = "$($st.id)"; Label = (Get-CustomLabel $st); Elapsed = [bool]$st.elapsed; Activity = (New-CustomActivity $st) }
+        }
+        $script:CustomSkipped = $skipped
+        $cards
+    }
+    function Update-CustomCards {
+        $cu = $Sync.Custom
+        $cards = @(if ($cu) { Get-CustomCards $cu.Items "$($cu.Mode)" })
+        $sk = $script:CustomSkipped -join ', '
+        if ($sk -ne $script:CustomSkipLog) {
+            $script:CustomSkipLog = $sk
+            if ($sk) { Log "No free card for: $sk. Give it its own Discord App ID, or merge your statuses into one card." }
+        }
+        $wanted = @{}
+        foreach ($cd in $cards) { $wanted[$cd.AppId] = $cd }
+        foreach ($id in @($wanted.Keys)) {
+            try {
+                if (-not $CustomConns.ContainsKey($id)) { $CustomConns[$id] = New-Conn $id 'custom' }
+                $c = $CustomConns[$id]
+                if (-not (Connect-Discord $c)) { continue }
+                $cd = $wanted[$id]
+                $sig = "$($cd.Key)|$($cd.Elapsed)|" + ($cd.Activity | ConvertTo-Json -Depth 6 -Compress)
+                $changed = ($c.Id -ne $sig)
+                if ($changed -or (([datetime]::UtcNow - $c.SentUtc).TotalSeconds -ge 60)) {
+                    if (-not $script:CustomStart.ContainsKey($cd.Key)) { $script:CustomStart[$cd.Key] = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+                    $act = $cd.Activity
+                    if ($cd.Elapsed) { $act.timestamps = @{ start = $script:CustomStart[$cd.Key] } }
+                    if ((Push-Card $c $act $sig $changed) -and $changed) { Log "Custom status: $($cd.Label)" }
+                }
+            } catch { Log "Custom status error: $($_.Exception.Message)"; Close-Discord $CustomConns[$id]; $CustomConns.Remove($id) }
+        }
+        foreach ($id in @($CustomConns.Keys)) {
+            if (-not $wanted.ContainsKey($id)) { Clear-Card $CustomConns[$id]; Close-Discord $CustomConns[$id]; $CustomConns.Remove($id) }
+        }
+        # a status that was switched off starts its timer from zero next time
+        $keys = @($cards | ForEach-Object { $_.Key })
+        foreach ($k in @($script:CustomStart.Keys)) { if ($keys -notcontains $k) { $script:CustomStart.Remove($k) } }
+        $script:CustomShown = $cards.Count
+    }
+    function Close-CustomConns { foreach ($k in @($CustomConns.Keys)) { Close-Discord $CustomConns[$k]; $CustomConns.Remove($k) } }
+
     Log "Presence started."
     while (-not $Sync.Stop) {
         try {
             if (-not (Test-DiscordRunning)) {
                 $Sync.Status = 'Waiting for Discord...'
-                Close-Discord $ConnMusic; Close-Discord $ConnApp
+                Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
                 foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }; $GameConns = @{}
                 Nap 8; continue
             }
@@ -673,16 +807,20 @@ public static class RPFG {
                 Clear-Card $ConnApp; Close-Discord $ConnApp
             }
 
+            # ================= CARD 4+: your custom statuses =================
+            Update-CustomCards
+
             $parts = @()
             if ($running.Count) { $parts += "Playing $($running[0].G.name)" }
             if ($musicActive)   { $parts += "Listening: $title" }
             if ($appShown -and -not $running.Count) { $parts += "App: $($Sync.AppLabel)" }
+            if ($script:CustomShown) { $parts += $(if ($script:CustomShown -gt 1) { "$($script:CustomShown) custom statuses" } else { 'Custom status' }) }
             $Sync.Status = if ($parts.Count) { $parts -join '  |  ' } else { 'Watching for games' }
             Nap 3
         }
         catch {
             Log "Error: $($_.Exception.Message)"
-            Close-Discord $ConnMusic; Close-Discord $ConnApp
+            Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
             foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }; $GameConns = @{}
             Nap 5
         }
@@ -690,7 +828,8 @@ public static class RPFG {
 
     # stopped: remove our cards
     Clear-Card $ConnMusic; Clear-Card $ConnApp
-    Close-Discord $ConnMusic; Close-Discord $ConnApp
+    foreach ($k in @($CustomConns.Keys)) { Clear-Card $CustomConns[$k] }
+    Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
     foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }
     Log "Presence stopped."
 }
@@ -736,7 +875,7 @@ function New-Sync {
     [hashtable]::Synchronized(@{
         Stop = $false; Queue = (New-Object System.Collections.Concurrent.ConcurrentQueue[string])
         Status = 'Stopped'; Games = @(); RunningIds = @(); WatchId = $null; GameExited = $false; ScanDone = $false; AppLabel = ''
-        UpdateState = ''; UpdateFile = $null; LatestVersion = ''
+        UpdateState = ''; UpdateFile = $null; LatestVersion = ''; Custom = @{ Mode = 'separate'; Items = @() }
     })
 }
 function Start-Block($block, $arguments) {
@@ -778,6 +917,7 @@ if ($Headless) {
     $settings = Add-BuiltInIds (Load-Settings)
     $sync = New-Sync
     $sync.Games = New-EngineGames (Read-Library) $settings
+    $sync.Custom = @{ Mode = "$($settings.custom_mode)"; Items = @($settings.custom_statuses) }
     $job = Start-Block $Engine @($settings, $sync)
     Write-Host "RichPresence (headless) - Ctrl+C to stop"
     try {
@@ -800,6 +940,8 @@ if (-not $mutex.WaitOne(0)) {
     exit
 }
 [System.Windows.Forms.Application]::EnableVisualStyles()
+# the custom status preview loads picture links itself
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Settings = Load-Settings
 $Sync     = New-Sync
@@ -848,7 +990,7 @@ $brand = New-Ctl System.Windows.Forms.Label $side @{ Text = 'RichPresence'; Font
 $brandSub = New-Ctl System.Windows.Forms.Label $side @{ Text = 'your games on Discord'; Font = $fSmall; ForeColor = $cDim; Location = (Pt 18 50); AutoSize = $true }
 $navButtons = @{}
 $navY = 92
-foreach ($n in 'Games', 'Music & Apps', 'Settings', 'Log') {
+foreach ($n in 'Games', 'Music & Apps', 'Custom status', 'Settings', 'Log') {
     $b = New-Ctl System.Windows.Forms.Button $side @{ Text = "   $n"; UseMnemonic = $false; TextAlign = 'MiddleLeft'; Location = (Pt 0 $navY); Size = (Sz 190 40) }
     $b.FlatStyle = 'Flat'; $b.FlatAppearance.BorderSize = 0; $b.Font = $fBold; $b.ForeColor = $cDim; $b.BackColor = $cSide; $b.Cursor = 'Hand'
     $navButtons[$n] = $b; $navY += 42
@@ -861,8 +1003,8 @@ $content = New-Ctl System.Windows.Forms.Panel $form @{ Dock = 'Fill'; BackColor 
 $content.BringToFront()
 
 function New-Page { New-Ctl System.Windows.Forms.Panel $content @{ Dock = 'Fill'; BackColor = $cBg; Visible = $false; Padding = (New-Object System.Windows.Forms.Padding(20)) } }
-$pGames = New-Page; $pMusic = New-Page; $pSettings = New-Page; $pLog = New-Page
-$pages = @{ 'Games' = $pGames; 'Music & Apps' = $pMusic; 'Settings' = $pSettings; 'Log' = $pLog }
+$pGames = New-Page; $pMusic = New-Page; $pCustom = New-Page; $pSettings = New-Page; $pLog = New-Page
+$pages = @{ 'Games' = $pGames; 'Music & Apps' = $pMusic; 'Custom status' = $pCustom; 'Settings' = $pSettings; 'Log' = $pLog }
 function Show-Page($name) {
     foreach ($k in $pages.Keys) {
         $pages[$k].Visible = ($k -eq $name)
@@ -894,6 +1036,56 @@ $chkArt    = New-Check $pMusic 'Show album art' 166
 $chkApps   = New-Check $pMusic 'Show the app I''m using when nothing else is showing' 194
 $btnMusicSave = New-Ctl System.Windows.Forms.Button $pMusic @{ Text = 'Apply'; Location = (Pt 24 250); Size = (Sz 100 32) }
 Style-Button $btnMusicSave $true
+
+# ---- Custom status page: a list of your own cards on the left, the selected one's editor on the right
+$CustomTypes     = @(0, 2, 3, 5)
+$CustomTypeNames = @('Playing', 'Listening to', 'Watching', 'Competing in')
+$cTitle = New-Ctl System.Windows.Forms.Label $pCustom @{ Text = 'Custom status'; Font = $fTitle; Location = (Pt 20 20); AutoSize = $true }
+$cNote = New-Ctl System.Windows.Forms.Label $pCustom @{ Text = 'Your own Discord cards: your text, your pictures, up to two buttons. Make as many as you like and tick the ones to show.'; ForeColor = $cDim; Location = (Pt 22 58); AutoSize = $true }
+$lstC = New-Ctl System.Windows.Forms.CheckedListBox $pCustom @{ Location = (Pt 24 88); Size = (Sz 196 236); BackColor = $cCard; ForeColor = $cText; BorderStyle = 'None'; IntegralHeight = $false }
+$btnCNew  = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = '+ New'; Location = (Pt 24 332); Size = (Sz 96 28) }
+$btnCCopy = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = 'Duplicate'; Location = (Pt 124 332); Size = (Sz 96 28) }
+$btnCUp   = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = 'Up'; Location = (Pt 24 364); Size = (Sz 62 28) }
+$btnCDown = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = 'Down'; Location = (Pt 90 364); Size = (Sz 62 28) }
+$btnCDel  = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = 'Delete'; Location = (Pt 156 364); Size = (Sz 64 28) }
+foreach ($b in $btnCNew, $btnCCopy, $btnCUp, $btnCDown, $btnCDel) { Style-Button $b $false; $b.Font = $fUi }
+$rdoCSep   = New-Ctl System.Windows.Forms.RadioButton $pCustom @{ Text = 'Each one is its own card'; Location = (Pt 24 402); AutoSize = $true; ForeColor = $cText }
+$rdoCMerge = New-Ctl System.Windows.Forms.RadioButton $pCustom @{ Text = 'Merge them into one card'; Location = (Pt 24 426); AutoSize = $true; ForeColor = $cText }
+$btnCSave = New-Ctl System.Windows.Forms.Button $pCustom @{ Text = 'Save && show'; Location = (Pt 24 460); Size = (Sz 196 34) }
+Style-Button $btnCSave $true
+$lblCInfo = New-Ctl System.Windows.Forms.Label $pCustom @{ Text = ''; UseMnemonic = $false; ForeColor = $cDim; Font = $fSmall; Location = (Pt 24 502); Size = (Sz 196 150) }
+
+$ed = New-Ctl System.Windows.Forms.Panel $pCustom @{ Location = (Pt 240 88); Size = (Sz 540 520); AutoScroll = $true; Enabled = $false }
+$pCustom.add_Resize({ $ed.Size = Sz ([math]::Max(200, $pCustom.ClientSize.Width - 260)) ([math]::Max(200, $pCustom.ClientSize.Height - 108)) })
+function New-EdLabel($text, $x, $y) { New-Ctl System.Windows.Forms.Label $ed @{ Text = $text; UseMnemonic = $false; ForeColor = $cDim; Location = (Pt $x $y); AutoSize = $true } }
+function New-EdBox($x, $y, $w) { New-Ctl System.Windows.Forms.TextBox $ed @{ Location = (Pt $x $y); Size = (Sz $w 24); BackColor = $cCard; ForeColor = $cText; BorderStyle = 'FixedSingle' } }
+$chkCOn = New-Ctl System.Windows.Forms.CheckBox $ed @{ Text = 'Show this one on Discord'; Location = (Pt 0 0); AutoSize = $true; ForeColor = $cText }
+[void](New-EdLabel 'Shows as' 0 28)
+$cmbCType = New-Ctl System.Windows.Forms.ComboBox $ed @{ Location = (Pt 0 46); Size = (Sz 118 24); DropDownStyle = 'DropDownList'; BackColor = $cCard; ForeColor = $cText; FlatStyle = 'Flat' }
+[void]$cmbCType.Items.AddRange([object[]]$CustomTypeNames)
+[void](New-EdLabel 'Title' 126 28)
+$txtCName    = New-EdBox 126 46 214
+[void](New-EdLabel 'Line 1' 0 78);  $txtCDetails = New-EdBox 0 96 340
+[void](New-EdLabel 'Line 2' 0 128); $txtCState   = New-EdBox 0 146 340
+[void](New-EdLabel 'Big picture - an https:// link to an image' 0 178); $txtCLarge  = New-EdBox 0 196 340
+[void](New-EdLabel 'Text when you hover the big picture' 0 228);      $txtCLargeT = New-EdBox 0 246 340
+[void](New-EdLabel 'Small round picture (optional link)' 0 278);      $txtCSmall  = New-EdBox 0 296 340
+[void](New-EdLabel 'Text when you hover the small picture' 0 328);    $txtCSmallT = New-EdBox 0 346 340
+[void](New-EdLabel 'Button 1 - text, then link (others see it; Discord hides it from you)' 0 378)
+$txtCB1L = New-EdBox 0 396 110; $txtCB1U = New-EdBox 116 396 224
+[void](New-EdLabel 'Button 2' 0 428)
+$txtCB2L = New-EdBox 0 446 110; $txtCB2U = New-EdBox 116 446 224
+$chkCElapsed = New-Ctl System.Windows.Forms.CheckBox $ed @{ Text = 'Show how long it has been on'; Location = (Pt 0 480); AutoSize = $true; ForeColor = $cText }
+[void](New-EdLabel 'Your own Discord App ID (optional)' 0 512)
+$txtCAppId = New-EdBox 0 530 200
+$lnkCApp = New-Ctl System.Windows.Forms.LinkLabel $ed @{ Text = 'Make one (free)'; UseMnemonic = $false; Location = (Pt 210 534); AutoSize = $true; LinkColor = $cAccent }
+$lblCAppHelp = New-Ctl System.Windows.Forms.Label $ed @{ UseMnemonic = $false; ForeColor = $cDim; Font = $fSmall; Location = (Pt 0 562); Size = (Sz 340 76)
+    Text = "Empty = one of RichPresence's built-in cards ($($CustomPoolIds.Count) can show at once). With your own app the card's title is your app's name, and you can upload pictures under Rich Presence > Art Assets, then type a picture's name instead of a link." }
+[void](New-EdLabel 'Preview' 360 178)
+$picCLarge = New-Ctl System.Windows.Forms.PictureBox $ed @{ Location = (Pt 360 196); Size = (Sz 120 120); SizeMode = 'Zoom'; BackColor = $cCardHi }
+$picCSmall = New-Ctl System.Windows.Forms.PictureBox $ed @{ Location = (Pt 450 286); Size = (Sz 40 40); SizeMode = 'Zoom'; BackColor = $cCard }
+$picCSmall.BringToFront()
+$lblCPrev = New-Ctl System.Windows.Forms.Label $ed @{ UseMnemonic = $false; Location = (Pt 360 334); Size = (Sz 170 70); ForeColor = $cText }
 
 # ---- Settings page
 $sTitle = New-Ctl System.Windows.Forms.Label $pSettings @{ Text = 'Settings'; Font = $fTitle; Location = (Pt 20 20); AutoSize = $true }
@@ -961,7 +1153,7 @@ function Start-Presence {
     if ($script:Job) { return }
     Read-FromUi
     $Sync.Stop = $false; $Sync.GameExited = $false; $Sync.Status = 'Starting...'
-    Push-GamesToEngine
+    Push-GamesToEngine; Push-CustomToEngine
     $copy = @{}
     foreach ($k in @($Settings.Keys)) { $copy[$k] = $Settings[$k] }
     $copy = Add-BuiltInIds $copy
@@ -985,6 +1177,129 @@ function Start-Scan {
     $copy = @{ extra_folders = @($Settings.extra_folders); custom_games = @($Settings.custom_games) }
     $script:ScanJob = Start-Block $Scanner @($copy, $Sync, $DataDir)
 }
+
+# ---- custom statuses
+function New-CustomStatus($from, $keepId) {
+    $h = [ordered]@{
+        id = [guid]::NewGuid().ToString('N'); enabled = $false; type = 0; name = ''; details = ''; state = ''
+        large_image = ''; large_text = ''; small_image = ''; small_text = ''
+        button1_label = ''; button1_url = ''; button2_label = ''; button2_url = ''; elapsed = $true; app_id = ''
+    }
+    if ($from) { foreach ($k in @($h.Keys)) { if (($keepId -or $k -ne 'id') -and $null -ne $from.$k) { $h[$k] = $from.$k } } }
+    $h
+}
+function Get-CustomLabel($st) {
+    foreach ($v in $st.name, $st.details, $st.state) { if ("$v".Trim()) { return "$v".Trim() } }
+    'Untitled'
+}
+$script:Customs = New-Object System.Collections.ArrayList
+foreach ($x in @($Settings.custom_statuses)) { if ($x) { [void]$script:Customs.Add((New-CustomStatus $x $true)) } }
+$Settings.custom_statuses = $script:Customs     # saved with the rest of the settings
+$script:CurC = -1; $script:LoadingC = $false
+
+# the engine gets its own copy, so editing never races with it
+function Push-CustomToEngine {
+    $Sync.Custom = @{ Mode = "$($Settings.custom_mode)"; Items = @($script:Customs | ForEach-Object { New-Object psobject -Property $_ }) }
+}
+function Test-CustomStatus($st) {
+    $own = "$($st.app_id)".Trim()
+    $p = @()
+    if ($own -and $own -notmatch '^\d{17,20}$') { $p += 'The App ID should be 17-20 digits (Discord Developer Portal > your app > Application ID).' }
+    foreach ($f in @(@('large_image', 'Big picture'), @('small_image', 'Small picture'))) {
+        $v = "$($st[$f[0]])".Trim()
+        if (-not $v) { continue }
+        if ($v -match '^http://') { $p += "$($f[1]): use an https:// link." }
+        elseif ($v -match '^https://') {
+            if ($v.Length -gt 256) { $p += "$($f[1]): the link is too long (256 characters max)." }
+            if ($v -match '(cdn\.discordapp\.com|media\.discordapp\.net)/attachments') { $p += "$($f[1]): Discord upload links expire after about a day. Host it somewhere that keeps it." }
+        }
+        elseif ($v -notmatch '^[\w.-]{1,128}$') { $p += "$($f[1]): that isn't a link." }
+        elseif (-not $own) { $p += "$($f[1]): '$v' isn't a link. Picture names only work with your own App ID." }
+    }
+    foreach ($n in 1, 2) {
+        $l = "$($st["button${n}_label"])".Trim(); $u = "$($st["button${n}_url"])".Trim()
+        if ($l -and $u -notmatch '^https?://\S+$') { $p += "Button ${n}: needs a link starting with https://" }
+        if ($u -and -not $l) { $p += "Button ${n}: needs some text." }
+        if ($l.Length -gt 32) { $p += "Button ${n}: text is cut to 32 characters." }
+    }
+    foreach ($f in @(@('name', 'Title'), @('details', 'Line 1'), @('state', 'Line 2'))) {
+        if ("$($st[$f[0]])".Trim().Length -eq 1) { $p += "$($f[1]): Discord needs at least 2 characters." }
+    }
+    , $p
+}
+function Update-CustomInfo($problems) {
+    $on = @($script:Customs | Where-Object { $_.enabled })
+    $shared = @($on | Where-Object { "$($_.app_id)".Trim() -notmatch '^\d{17,20}$' })
+    $warn = $false
+    $t = if ($on.Count -eq 0) { 'Nothing ticked yet.' }
+    elseif ($Settings.custom_mode -eq 'merge' -and $on.Count -gt 1) {
+        "$($on.Count) ticked, shown as one card: the top one's title, type and big picture; every line joined; the next picture becomes the small one. Use Up/Down to change the order."
+    }
+    elseif ($Settings.custom_mode -ne 'merge' -and $shared.Count -gt $CustomPoolIds.Count) {
+        $warn = $true
+        "$($on.Count) ticked, but only $($CustomPoolIds.Count) can use the built-in cards. Give the others their own App ID, or merge them into one card."
+    }
+    else { "$($on.Count) ticked." }
+    if ($problems -and @($problems).Count) { $warn = $true; $t += "`n`n" + (@($problems) -join "`n") }
+    $lblCInfo.Text = $t
+    $lblCInfo.ForeColor = $(if ($warn) { C '#f0b232' } else { $cDim })
+}
+function Set-PreviewImage($pic, $v) {
+    try { $pic.CancelAsync() } catch {}
+    $pic.Image = $null
+    $v = "$v".Trim()
+    if ($pic -eq $picCSmall) { $pic.Visible = [bool]$v }
+    if ($v -match '^https://\S+$') { try { $pic.LoadAsync($v) } catch {} }
+}
+function Update-CustomPreview($images) {
+    $i = [math]::Max(0, $cmbCType.SelectedIndex)
+    $title = $txtCName.Text.Trim(); if (-not $title) { $title = '(app name)' }
+    $lblCPrev.Text = (@("$($CustomTypeNames[$i]) $title", $txtCDetails.Text.Trim(), $txtCState.Text.Trim()) | Where-Object { $_ }) -join "`n"
+    if ($images) { Set-PreviewImage $picCLarge $txtCLarge.Text; Set-PreviewImage $picCSmall $txtCSmall.Text }
+}
+function Load-CustomEditor {
+    $i = $lstC.SelectedIndex
+    $script:CurC = $i
+    $ed.Enabled = ($i -ge 0)
+    $btnCCopy.Enabled = ($i -ge 0); $btnCDel.Enabled = ($i -ge 0)
+    $btnCUp.Enabled = ($i -gt 0); $btnCDown.Enabled = ($i -ge 0 -and $i -lt $script:Customs.Count - 1)
+    $st = if ($i -ge 0) { $script:Customs[$i] } else { New-CustomStatus $null $false }
+    $script:LoadingC = $true
+    $chkCOn.Checked = [bool]$st.enabled
+    $cmbCType.SelectedIndex = [math]::Max(0, [array]::IndexOf($CustomTypes, [int]$st.type))
+    $txtCName.Text = "$($st.name)"; $txtCDetails.Text = "$($st.details)"; $txtCState.Text = "$($st.state)"
+    $txtCLarge.Text = "$($st.large_image)"; $txtCLargeT.Text = "$($st.large_text)"
+    $txtCSmall.Text = "$($st.small_image)"; $txtCSmallT.Text = "$($st.small_text)"
+    $txtCB1L.Text = "$($st.button1_label)"; $txtCB1U.Text = "$($st.button1_url)"
+    $txtCB2L.Text = "$($st.button2_label)"; $txtCB2U.Text = "$($st.button2_url)"
+    $chkCElapsed.Checked = [bool]$st.elapsed; $txtCAppId.Text = "$($st.app_id)"
+    $script:LoadingC = $false
+    Update-CustomPreview $true
+}
+# every edit goes straight into the selected status; "Save & show" sends them to Discord
+function Save-CustomEditor {
+    if ($script:LoadingC -or $script:CurC -lt 0 -or $script:CurC -ge $script:Customs.Count) { return }
+    $st = $script:Customs[$script:CurC]
+    $st.type = $CustomTypes[[math]::Max(0, $cmbCType.SelectedIndex)]
+    $st.name = $txtCName.Text; $st.details = $txtCDetails.Text; $st.state = $txtCState.Text
+    $st.large_image = $txtCLarge.Text.Trim(); $st.large_text = $txtCLargeT.Text
+    $st.small_image = $txtCSmall.Text.Trim(); $st.small_text = $txtCSmallT.Text
+    $st.button1_label = $txtCB1L.Text; $st.button1_url = $txtCB1U.Text.Trim()
+    $st.button2_label = $txtCB2L.Text; $st.button2_url = $txtCB2U.Text.Trim()
+    $st.elapsed = $chkCElapsed.Checked; $st.app_id = $txtCAppId.Text.Trim()
+    Update-CustomPreview $false
+}
+function Refresh-CustomList($select) {
+    $script:LoadingC = $true
+    $lstC.BeginUpdate(); $lstC.Items.Clear()
+    foreach ($st in $script:Customs) { [void]$lstC.Items.Add((Get-CustomLabel $st), [bool]$st.enabled) }
+    $lstC.EndUpdate()
+    $script:LoadingC = $false
+    if ($select -ge $script:Customs.Count) { $select = $script:Customs.Count - 1 }
+    $lstC.SelectedIndex = $select
+    Load-CustomEditor
+}
+function Commit-Custom($problems) { Save-Settings $Settings; Push-CustomToEngine; Update-CustomInfo $problems }
 
 function Play-Game($g) {
     if (-not $g.launch) { return }
@@ -1117,6 +1432,69 @@ $btnAdd.add_Click({
     }
 })
 $txtSearch.add_TextChanged({ Rebuild-Tiles })
+
+# custom status page
+$lstC.add_SelectedIndexChanged({ if (-not $script:LoadingC -and $lstC.SelectedIndex -ne $script:CurC) { Load-CustomEditor } })
+$lstC.add_ItemCheck({
+    param($s, $e)
+    if ($script:LoadingC) { return }
+    $on = ($e.NewValue -eq 'Checked')
+    $script:Customs[$e.Index].enabled = $on
+    if ($e.Index -eq $script:CurC) { $script:LoadingC = $true; $chkCOn.Checked = $on; $script:LoadingC = $false }
+    Commit-Custom $null
+})
+$chkCOn.add_CheckedChanged({ if (-not $script:LoadingC -and $script:CurC -ge 0) { $lstC.SetItemChecked($script:CurC, $chkCOn.Checked) } })
+foreach ($tb in $txtCName, $txtCDetails, $txtCState, $txtCLarge, $txtCLargeT, $txtCSmall, $txtCSmallT, $txtCB1L, $txtCB1U, $txtCB2L, $txtCB2U, $txtCAppId) {
+    $tb.add_TextChanged({ Save-CustomEditor })
+}
+$cmbCType.add_SelectedIndexChanged({ Save-CustomEditor })
+$chkCElapsed.add_CheckedChanged({ Save-CustomEditor })
+$txtCLarge.add_Leave({ Set-PreviewImage $picCLarge $txtCLarge.Text })
+$txtCSmall.add_Leave({ Set-PreviewImage $picCSmall $txtCSmall.Text })
+$lnkCApp.add_Click({ Start-Process 'https://discord.com/developers/applications' })
+$btnCNew.add_Click({
+    [void]$script:Customs.Add((New-CustomStatus $null $false))
+    Refresh-CustomList ($script:Customs.Count - 1); Commit-Custom $null
+    $txtCName.Focus() | Out-Null
+})
+$btnCCopy.add_Click({
+    if ($script:CurC -lt 0) { return }
+    $copy = New-CustomStatus $script:Customs[$script:CurC] $false
+    $copy.enabled = $false; $copy.name = (Get-CustomLabel $copy) + ' (copy)'
+    $script:Customs.Insert($script:CurC + 1, $copy)
+    Refresh-CustomList ($script:CurC + 1); Commit-Custom $null
+})
+$btnCDel.add_Click({
+    $i = $script:CurC
+    if ($i -lt 0) { return }
+    if ([System.Windows.Forms.MessageBox]::Show("Delete `"$(Get-CustomLabel $script:Customs[$i])`"?", 'RichPresence', 'YesNo') -ne 'Yes') { return }
+    $script:Customs.RemoveAt($i)
+    Refresh-CustomList $i; Commit-Custom $null
+})
+foreach ($b in $btnCUp, $btnCDown) {
+    $b.Tag = $(if ($b -eq $btnCUp) { -1 } else { 1 })
+    $b.add_Click({
+        $i = $script:CurC; $j = $i + [int]$this.Tag
+        if ($i -lt 0 -or $j -lt 0 -or $j -ge $script:Customs.Count) { return }
+        $st = $script:Customs[$i]; $script:Customs.RemoveAt($i); $script:Customs.Insert($j, $st)
+        Refresh-CustomList $j; Commit-Custom $null
+    })
+}
+foreach ($r in $rdoCSep, $rdoCMerge) {
+    $r.add_CheckedChanged({
+        if ($script:LoadingC -or -not $this.Checked) { return }
+        $Settings.custom_mode = $(if ($rdoCMerge.Checked) { 'merge' } else { 'separate' })
+        Commit-Custom $null
+    })
+}
+$btnCSave.add_Click({
+    Save-CustomEditor
+    $problems = @()
+    if ($script:CurC -ge 0) { $problems = Test-CustomStatus $script:Customs[$script:CurC] }
+    Refresh-CustomList $script:CurC
+    if (-not $script:Job -and @($script:Customs | Where-Object { $_.enabled }).Count) { Start-Presence }
+    Commit-Custom $problems
+})
 $chkWin.add_CheckedChanged({ try { Set-StartupShortcut $chkWin.Checked } catch {} })
 $linkGuide.add_Click({ Start-Process $RepoUrl })
 
@@ -1214,6 +1592,12 @@ $timer.add_Tick({
 })
 
 Apply-ToUi
+$script:LoadingC = $true
+$rdoCMerge.Checked = ($Settings.custom_mode -eq 'merge'); $rdoCSep.Checked = -not $rdoCMerge.Checked
+$script:LoadingC = $false
+Refresh-CustomList $(if ($script:Customs.Count) { 0 } else { -1 })
+Update-CustomInfo $null
+Push-CustomToEngine
 Show-Page 'Games'
 Rebuild-Tiles
 $timer.Start()

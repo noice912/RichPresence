@@ -1,20 +1,17 @@
-## RichPresence 1.2.1
+## RichPresence 1.3.0
 
-### Automatic updates
-- **Windows:** checks GitHub when it opens and every 6 hours. New versions are downloaded, checked
-  against the SHA-256 checksum GitHub publishes, and installed with a quick restart, never while a
-  game is running. Turn it off (or update by hand) in Settings.
-- **Linux AppImage:** the same. The `.deb` shows when a new version is out.
-- **Android:** the app downloads and verifies the new APK, then opens Android's installer
-  (Android always asks you to confirm).
-- **iPhone:** not possible for sideloaded apps; install the new `.ipa` with Sideloadly.
+### Custom status (Windows)
+A new **Custom status** tab for making your own Discord cards:
+- your own title, two lines of text, a big picture and a small round picture (as image links), hover
+  text, up to two link buttons, and an optional "time elapsed" counter
+- make as many as you want and tick the ones to show
+- show each as **its own card** (2 built-in, more with your own free Discord App ID) or **merge** the
+  ticked ones into **one card**
+- live preview, Up/Down ordering, Duplicate, and warnings for broken or expiring picture links
+- if Discord rejects a card, the reason now shows in the Log tab
 
-### From 1.2.0
-- Windows and Linux let Discord detect games it knows first (keeps Recent Activity and streaks),
-  then show RichPresence's card after 2 minutes.
-- Android (`RichPresence-android.apk`): link your Discord account; shows your game and your music.
-- iPhone (`RichPresence-ios-sideload.ipa`, install with [Sideloadly](https://sideloadly.io)): Apple Music
-  or Spotify with live lyrics, games through Shortcuts automations, two cards at once.
-- Linux: `RichPresence-x86_64.AppImage` or `richpresence_1.2.1_amd64.deb`.
+### From 1.2.1
+- Automatic updates on Windows and Linux AppImage. Android downloads and verifies the APK, then opens
+  the installer. iPhone: install the new `.ipa` with Sideloadly.
 
 Every file is built by GitHub Actions from this repository's source.
