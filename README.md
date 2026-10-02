@@ -103,7 +103,27 @@ How it knows what's playing:
 2. **The tab title.** If the site doesn't say, RichPresence recognizes it from the browser's window title, like "Watch The Bear | Hulu".
 3. **The poster.** The show name is looked up on [TVMaze](https://www.tvmaze.com) (TV shows) or [Cinemeta](https://v3-cinemeta.strem.io) (movies). A poster is only used when its name matches.
 
-It never reads the page itself, your cookies or your account. Each service has its own Discord card with its name and logo, so it shows next to your app card. Plex, YouTube and Twitch use the app card instead. Paused videos don't show. Turn it off, or hide the show name, posters, or YouTube/Twitch, under **Music & Apps**.
+The app never reads the page itself, your cookies or your account (for Netflix and Hulu, the optional extension below reads the show name from the player page). Each service has its own Discord card with its name and logo, so it shows next to your app card. Plex, YouTube and Twitch use the app card instead. Paused videos don't show. Turn it off, or hide the show name, posters, or YouTube/Twitch, under **Music & Apps**.
+
+### Netflix and Hulu: the browser extension
+
+Netflix and Hulu don't put the show's name anywhere RichPresence can see it: the tab only says "Netflix" or "Hulu | Watch". The **RichPresence browser extension** reads the show and episode from the player page and passes them to the app on your PC, so the card shows them:
+
+```
+ Watching Netflix
+ Stranger Things
+ S4:E1 Chapter One: The Hellfire Club
+ 10:00 / 1:15:00
+```
+
+**Install it (Edge, Chrome, Brave or Opera):**
+
+1. Download **`RichPresence-extension.zip`** from the [latest release](../../releases/latest) and unzip it into a folder you'll keep.
+2. Open `edge://extensions` (or `chrome://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and pick the unzipped folder.
+4. Play something on Netflix or Hulu. Click the extension's icon to check it's connected and see what it reads.
+
+The extension only runs on `netflix.com` and `hulu.com` and only sends to RichPresence on your own PC (`127.0.0.1`). RichPresence accepts those messages only from a browser extension, never from a website. The extension sends nothing else anywhere and stores nothing. Its source is in the [`extension`](extension) folder.
 
 ## Genshin Impact stats (optional)
 

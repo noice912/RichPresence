@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 280px; margin: 0; padding: 14px; font: 13px "Segoe UI", system-ui, sans-serif; background: #14161b; color: #e8eaf0; }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #8b91a1; }
+    .on .dot { background: #3ba55d; } .off .dot { background: #ed4245; }
+    .card { margin-top: 10px; padding: 10px; border-radius: 8px; background: #1f232b; }
+    .svc { color: #8b91a1; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .title { font-weight: 600; margin-top: 2px; }
+    .dim { color: #8b91a1; }
+  </style>
+</head>
+<body>
+  <h1>RichPresence</h1>
+  <div id="conn"><span class="dot"></span><span id="connText">Checking...</span></div>
+  <div id="now"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

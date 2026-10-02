@@ -33,7 +33,7 @@ $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
 # built-in apps that custom statuses can borrow when the user hasn't made their own Discord app (one card each)
 $CustomPoolIds  = @('1553178514365358100', '1553247468957990943')
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
-$AppVersion   = '1.4.1'     # build.ps1 reads this; bump it for every release
+$AppVersion   = '1.5.0'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -531,7 +531,21 @@ public static class RPWin {
             if ($i -gt 0 -and $pids.ContainsKey([int]$_.Substring(0, $i))) { $_.Substring($i + 1) }
         })
     }
+    # what the browser extension last reported for a service (only if it's recent)
+    function Get-ExtReport($name) {
+        $e = $Sync.Ext[$name]
+        if ($e -and ([datetime]::UtcNow - $e.At).TotalSeconds -lt 15) { return $e }
+        $null
+    }
     function Find-Watching {
+        # the browser extension reads the player itself, so it knows best: show, episode, exact position
+        foreach ($sv in $Services) {
+            $e = Get-ExtReport $sv.Name
+            if ($e -and $e.Playing) {
+                $pos = $e.Pos; if ($e.Dur -gt 0) { $pos = [math]::Min($e.Dur, $pos + ([datetime]::UtcNow - $e.At).TotalSeconds) }
+                return [pscustomobject]@{ Svc = $sv; Show = $e.Title; Sub = $e.Episode; Dur = $e.Dur; Pos = $pos }
+            }
+        }
         $mgr = Await ($SmtcType::RequestAsync()) $SmtcType
         $titles = $null; $found = @()
         foreach ($s in @($mgr.GetSessions())) {
@@ -568,6 +582,9 @@ public static class RPWin {
             if (-not $show) { $show = $winClean }
             # player pages often only say "Hulu | Watch": that's not a show name
             if ($show -match '^(?i)(watch|watching|home|browse|player|play|video|videos|movie|movies|tv|series|shows?|search|details|stream)$') { $show = '' }
+            # the extension says this service is paused: believe it over another tab's media session
+            $e = Get-ExtReport $sv.Name
+            if ($e -and -not $e.Playing) { continue }
             $sub = if ($ma -and -not (Test-Host $ma) -and $ma -ne $show -and $ma -ne $sv.Name) { $ma } else { '' }
             $tl = $s.GetTimelineProperties()
             $dur = ($tl.EndTime.TotalSeconds - $tl.StartTime.TotalSeconds); $pos = ($tl.Position.TotalSeconds - $tl.StartTime.TotalSeconds)
@@ -1108,6 +1125,90 @@ $Updater = {
 }
 
 # ===========================================================================
+# BRIDGE - runs on a background runspace for as long as the app is open. The browser extension
+# (extension\ folder) tells it what's playing on Netflix/Hulu. It only listens on this PC (127.0.0.1),
+# and only accepts browser-extension requests: a website can't send the X-RichPresence header without
+# a CORS preflight, which is never allowed, and its Origin is never chrome-extension://.
+# ===========================================================================
+$BridgePort = 47610
+$Bridge = {
+    param($Sync, $Port, $Version)
+    $ErrorActionPreference = 'Stop'
+    function Log($m) { $Sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m)) }
+    function Send-Response($stream, [int]$code, [string]$status, [string]$body, [string]$origin) {
+        $hdr = "HTTP/1.1 $code $status`r`nConnection: close`r`nCache-Control: no-store`r`n"
+        if ($origin) { $hdr += "Access-Control-Allow-Origin: $origin`r`nAccess-Control-Allow-Headers: content-type, x-richpresence`r`nAccess-Control-Allow-Methods: GET, POST`r`n" }
+        $b = [Text.Encoding]::UTF8.GetBytes($body)
+        if ($b.Length) { $hdr += "Content-Type: application/json; charset=utf-8`r`n" }
+        $h = [Text.Encoding]::ASCII.GetBytes($hdr + "Content-Length: $($b.Length)`r`n`r`n")
+        $stream.Write($h, 0, $h.Length); if ($b.Length) { $stream.Write($b, 0, $b.Length) }
+    }
+    function Clip($v, $n) { $t = ("$v" -replace '[\r\n\t]+', ' ').Trim(); if ($t.Length -gt $n) { $t = $t.Substring(0, $n) }; $t }
+
+    $listener = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
+    try { $listener.Start() } catch { Log "Browser extension link unavailable (port $Port is busy)."; return }
+    try {
+        while (-not $Sync.BridgeStop) {
+            if (-not $listener.Pending()) { Start-Sleep -Milliseconds 150; continue }
+            $client = $listener.AcceptTcpClient()
+            try {
+                $client.ReceiveTimeout = 2000; $client.SendTimeout = 2000
+                $stream = $client.GetStream()
+                # request line + headers (8 KB max), then the body
+                $buf = New-Object byte[] 8192; $got = 0; $end = -1
+                while ($end -lt 0 -and $got -lt $buf.Length) {
+                    $n = $stream.Read($buf, $got, $buf.Length - $got); if ($n -le 0) { break }; $got += $n
+                    $end = ([Text.Encoding]::ASCII.GetString($buf, 0, $got)).IndexOf("`r`n`r`n")
+                }
+                if ($end -lt 0) { continue }
+                $head = [Text.Encoding]::ASCII.GetString($buf, 0, $end) -split "`r`n"
+                $parts = $head[0] -split ' '
+                $method = $parts[0]; $path = "$($parts[1])"
+                $h = @{}
+                foreach ($line in $head | Select-Object -Skip 1) { $i = $line.IndexOf(':'); if ($i -gt 0) { $h[$line.Substring(0, $i).Trim().ToLower()] = $line.Substring($i + 1).Trim() } }
+                $origin = "$($h['origin'])"
+                $fromExtension = $origin -match '^(chrome|moz)-extension://[\w-]+$' -and $h['x-richpresence'] -eq '1'
+                $allow = if ($origin -match '^(chrome|moz)-extension://[\w-]+$') { $origin } else { $null }
+
+                if ($method -eq 'OPTIONS') { Send-Response $stream 204 'No Content' '' $allow; continue }
+                if (-not $fromExtension) { Send-Response $stream 403 'Forbidden' '' $null; continue }
+
+                if ($method -eq 'GET' -and $path -eq '/status') {
+                    $list = @(foreach ($k in @($Sync.Ext.Keys)) {
+                        $e = $Sync.Ext[$k]
+                        if (([datetime]::UtcNow - $e.At).TotalSeconds -lt 30) { @{ service = $k; title = $e.Title; episode = $e.Episode; playing = $e.Playing } }
+                    })
+                    Send-Response $stream 200 'OK' (@{ app = 'RichPresence'; version = $Version; watching = $list } | ConvertTo-Json -Depth 4 -Compress) $allow
+                    continue
+                }
+                if ($method -eq 'POST' -and $path -eq '/watching') {
+                    $len = 0; [void][int]::TryParse("$($h['content-length'])", [ref]$len)
+                    if ($len -le 0 -or $len -gt 8192) { Send-Response $stream 400 'Bad Request' '' $allow; continue }
+                    $body = New-Object byte[] $len
+                    $have = [math]::Min($got - ($end + 4), $len)
+                    if ($have -gt 0) { [Array]::Copy($buf, $end + 4, $body, 0, $have) }
+                    while ($have -lt $len) { $n = $stream.Read($body, $have, $len - $have); if ($n -le 0) { break }; $have += $n }
+                    $j = [Text.Encoding]::UTF8.GetString($body, 0, $have) | ConvertFrom-Json
+                    $svc = "$($j.service)"
+                    if ($svc -notin 'Netflix', 'Hulu') { Send-Response $stream 400 'Bad Request' '' $allow; continue }
+                    $pos = 0.0; $dur = 0.0; [void][double]::TryParse("$($j.position)", [ref]$pos); [void][double]::TryParse("$($j.duration)", [ref]$dur)
+                    $new = @{ Title = (Clip $j.title 128); Episode = (Clip $j.episode 128); Playing = [bool]$j.playing; Pos = $pos; Dur = $dur; At = [datetime]::UtcNow }
+                    $old = $Sync.Ext[$svc]
+                    if ($new.Playing -and $new.Title -and (-not $old -or $old.Title -ne $new.Title -or $old.Episode -ne $new.Episode)) {
+                        Log ("Browser extension: {0} - {1}{2}" -f $svc, $new.Title, $(if ($new.Episode) { " - $($new.Episode)" } else { '' }))
+                    }
+                    $Sync.Ext[$svc] = $new
+                    Send-Response $stream 204 'No Content' '' $allow
+                    continue
+                }
+                Send-Response $stream 404 'Not Found' '' $allow
+            } catch {
+            } finally { try { $client.Close() } catch {} }
+        }
+    } finally { try { $listener.Stop() } catch {} }
+}
+
+# ===========================================================================
 # Runner helpers
 # ===========================================================================
 function New-Sync {
@@ -1115,6 +1216,7 @@ function New-Sync {
         Stop = $false; Queue = (New-Object System.Collections.Concurrent.ConcurrentQueue[string])
         Status = 'Stopped'; Games = @(); RunningIds = @(); WatchId = $null; GameExited = $false; ScanDone = $false; AppLabel = ''
         UpdateState = ''; UpdateFile = $null; LatestVersion = ''; Custom = @{ Mode = 'separate'; Items = @() }
+        Ext = [hashtable]::Synchronized(@{}); BridgeStop = $false     # what the browser extension reports, per service
     })
 }
 function Start-Block($block, $arguments) {
@@ -1158,6 +1260,7 @@ if ($Headless) {
     $sync.Games = New-EngineGames (Read-Library) $settings
     $sync.Custom = @{ Mode = "$($settings.custom_mode)"; Items = @($settings.custom_statuses) }
     $job = Start-Block $Engine @($settings, $sync)
+    $bridgeJob = Start-Block $Bridge @($sync, $BridgePort, $AppVersion)
     Write-Host "RichPresence (headless) - Ctrl+C to stop"
     try {
         while ($true) {
@@ -1166,7 +1269,7 @@ if ($Headless) {
             if ($job.Handle.IsCompleted) { break }
             Start-Sleep -Milliseconds 300
         }
-    } finally { Stop-Block $job $sync 8000 }
+    } finally { Stop-Block $job $sync 8000; $sync.BridgeStop = $true; Stop-Block $bridgeJob $null 2000 }
     exit
 }
 
@@ -1793,6 +1896,7 @@ $form.add_FormClosing({
     try { Read-FromUi } catch {}
     Stop-Presence
     if ($script:ScanJob) { Stop-Block $script:ScanJob $null 0 }
+    $Sync.BridgeStop = $true; if ($script:BridgeJob) { Stop-Block $script:BridgeJob $null 2000 }
     $tray.Visible = $false; $tray.Dispose()
 })
 
@@ -1853,6 +1957,7 @@ Rebuild-Tiles
 $timer.Start()
 
 $form.add_Shown({
+    $script:BridgeJob = Start-Block $Bridge @($Sync, $BridgePort, $AppVersion)     # the browser extension's link
     Start-Scan
     $script:NextUpdateCheck = (Get-Date).AddSeconds(20)   # first check shortly after opening
     if ($Settings.start_presence_on_open -or $script:PendingPlay) { Start-Presence }

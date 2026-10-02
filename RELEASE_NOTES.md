@@ -1,3 +1,19 @@
+## RichPresence 1.5.0
+
+### Browser extension for Netflix and Hulu
+Netflix and Hulu don't tell Windows what you're watching, so the new **RichPresence browser extension**
+(`RichPresence-extension.zip`, for Edge, Chrome, Brave and Opera) reads it from the player page:
+- the show and episode ("Stranger Things", "S4:E1 Chapter One: The Hellfire Club"), or the movie
+- an exact progress bar, and the card goes away as soon as you pause
+- it only talks to RichPresence on your own PC, which only accepts it from a browser extension
+
+Install: unzip it, open `edge://extensions` (or `chrome://extensions`), turn on Developer mode,
+**Load unpacked**, pick the folder. Click its icon to see that it's connected.
+
+### From 1.4.1
+- the app card no longer shows next to the Watching card
+- no more "Watch" as a title or wrong posters; Edge tab titles are tidied up
+
 ## RichPresence 1.4.1
 
 ### Fixes

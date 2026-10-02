@@ -27,15 +27,24 @@ jobs:
         with:
           subject-path: dist/RichPresence.exe
 
+      # the Netflix/Hulu browser extension, ready for "Load unpacked" or a store upload
+      - name: Package browser extension
+        shell: powershell
+        run: Compress-Archive -Path extension\* -DestinationPath dist\RichPresence-extension.zip -Force
+
       - uses: actions/upload-artifact@v4
         with:
           name: RichPresence
-          path: dist/RichPresence.exe
+          path: |
+            dist/RichPresence.exe
+            dist/RichPresence-extension.zip
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/RichPresence.exe
+          files: |
+            dist/RichPresence.exe
+            dist/RichPresence-extension.zip
           body_path: RELEASE_NOTES.md
           name: RichPresence ${{ github.ref_name }}
