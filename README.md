@@ -93,6 +93,18 @@ Make as many as you like and tick the ones to show. Then pick how they appear:
 
 If Discord rejects a card (for example because a link is broken), the reason appears in the **Log** tab.
 
+## Watching: Netflix, Hulu and more (Windows)
+
+When a show or movie is playing, you get a **"Watching Netflix"** card with the show name and its poster. It works with **Netflix, Hulu, Disney+, Prime Video, Max, Crunchyroll, Paramount+, Peacock, Apple TV+ and Plex**, plus YouTube and Twitch if you want them. Use Chrome, Edge, Firefox, Brave, Opera or Vivaldi, or the service's own Windows app.
+
+How it knows what's playing:
+
+1. **The site's own info.** Streaming sites tell your browser what's playing so it can show the title in Windows' media controls (the box that appears when you press a volume key). RichPresence reads that the same way it reads Apple Music.
+2. **The tab title.** If the site doesn't say, RichPresence recognizes it from the browser's window title, like "Watch The Bear | Hulu".
+3. **The poster.** The show name is looked up on [TVMaze](https://www.tvmaze.com) (TV shows) or [Cinemeta](https://v3-cinemeta.strem.io) (movies). A poster is only used when its name matches.
+
+It never reads the page itself, your cookies or your account. Netflix has its own Discord card with the Netflix logo. The other services use the app card while something plays. Paused videos don't show. Turn it off, or hide the show name, posters, or YouTube/Twitch, under **Music & Apps**.
+
 ## Genshin Impact stats (optional)
 
 Put your **UID** (bottom-right corner in-game) into **Settings** and your Genshin card shows:
@@ -113,6 +125,7 @@ This reads your public profile from [Enka.Network](https://enka.network) (no log
 | **Music** | The Microsoft Store **Apple Music** app is playing. |
 | **App** | You're focused on another program (VS Code, Chrome, ...). Kept for a few minutes when you alt-tab to Discord. |
 | **Custom** | Whichever custom statuses you ticked (Windows). |
+| **Watching** | A video is playing on Netflix, Hulu, Disney+, ... in your browser or their app (Windows). |
 
 Discord shows one activity per Discord application, so each card uses its own application. Those IDs are built into the app. They're public identifiers, not secrets, and presence is set by *your* Discord client, so thousands of people can share them without ever overlapping.
 
@@ -121,9 +134,9 @@ Discord shows one activity per Discord application, so each card uses its own ap
 Small unsigned tools that watch running programs and talk to Discord sometimes get flagged by heuristic scanners. This one isn't malware, and you don't have to take that on faith:
 
 - **The whole program is one readable file:** [`src/RichPresence.ps1`](src/RichPresence.ps1). The EXE is that script wrapped by [PS2EXE](https://github.com/MScholtes/PS2EXE), and PS2EXE-built files are a common false-positive target.
-- **What it does:** list running process names, read the focused window's title, read the Apple Music "now playing" info from Windows, and talk to the Discord app on your PC over its local pipe.
+- **What it does:** list running process names, read the focused window's title and your browsers' window titles, read the "now playing" info Windows shows in its media controls (Apple Music, and videos in browsers), and talk to the Discord app on your PC over its local pipe.
 - **What it never does:** inject code, read or write game memory, modify game files, log keystrokes, or ask for passwords/tokens.
-- **Network calls:** `discord.com` (the public list of known games), `enka.network` (Genshin profile, optional), `itunes.apple.com` (album art), `lrclib.net` (lyrics), `google.com/s2/favicons` (app icons). Nothing is sent to the author.
+- **Network calls:** `discord.com` (the public list of known games), `enka.network` (Genshin profile, optional), `itunes.apple.com` (album art), `lrclib.net` (lyrics), `google.com/s2/favicons` (app and streaming-service icons), `api.tvmaze.com` and `v3-cinemeta.strem.io` (show and movie posters, optional). Nothing is sent to the author.
 - **Verify or build it yourself:** releases are built by GitHub Actions from this repo, so you can [build it yourself](#build-it-yourself) and compare. You can also upload the EXE to [VirusTotal](https://www.virustotal.com) and see that the few flags, if any, are generic heuristics from PS2EXE.
 
 ## Verify your download (optional)
@@ -146,7 +159,8 @@ RichPresence has **no telemetry, no accounts and no analytics**, and nothing is 
 | `itunes.apple.com` | The song title, artist and album, to find album art | Apple Music card + "Show album art" on |
 | `lrclib.net` | The song title, artist, album and length, to find lyrics | Apple Music card + "Show the current lyric line" on |
 | `enka.network` | Your Genshin UID, to read your public profile | Only if you enter a UID in Settings |
-| `google.com/s2/favicons` | The website name of a recognised app (e.g. `code.visualstudio.com`), to get its icon | "Show the app I'm using" on |
+| `api.tvmaze.com`, `v3-cinemeta.strem.io` | The name of the show or movie you're watching, to find its poster | Watching card + "Show its poster" on |
+| `google.com/s2/favicons` | The website name of a recognised app (e.g. `code.visualstudio.com`), to get its icon | "Show the app I'm using" or "Show what I'm watching" on |
 
 Turn any of these off under **Music & Apps**, or leave the Genshin UID empty. Like any web request, the sites can see your IP address. The names of the games you play, and the title of the window you're focused on, are only sent to your own Discord app, so that it can show them on your profile.
 

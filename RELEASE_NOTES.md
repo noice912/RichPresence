@@ -1,17 +1,16 @@
-## RichPresence 1.3.0
+## RichPresence 1.4.0
 
-### Custom status (Windows)
-A new **Custom status** tab for making your own Discord cards:
-- your own title, two lines of text, a big picture and a small round picture (as image links), hover
-  text, up to two link buttons, and an optional "time elapsed" counter
-- make as many as you want and tick the ones to show
-- show each as **its own card** (2 built-in, more with your own free Discord App ID) or **merge** the
-  ticked ones into **one card**
-- live preview, Up/Down ordering, Duplicate, and warnings for broken or expiring picture links
-- if Discord rejects a card, the reason now shows in the Log tab
+### Watching (Windows)
+A **"Watching"** card for **Netflix, Hulu, Disney+, Prime Video, Max, Crunchyroll, Paramount+, Peacock,
+Apple TV+ and Plex**, plus YouTube and Twitch (optional):
+- shows the show or movie name, taken from what the site reports to Windows' media controls or from the tab title
+- shows the show's poster, looked up on TVMaze (TV) and Cinemeta (movies), with the service's logo in the corner
+- shows a progress bar when the site reports where you are
+- works in Chrome, Edge, Firefox, Brave, Opera, Vivaldi and the services' Windows apps
+- Netflix has its own Discord card with the Netflix logo; the others use the app card while something plays
+- each part can be turned off under **Music & Apps**. It never reads the page itself, your cookies or your account.
 
-### From 1.2.1
-- Automatic updates on Windows and Linux AppImage. Android downloads and verifies the APK, then opens
-  the installer. iPhone: install the new `.ipa` with Sideloadly.
+### From 1.3.0
+- **Custom status** tab: your own cards with your own text, pictures and buttons, shown separately or merged into one.
 
 Every file is built by GitHub Actions from this repository's source.

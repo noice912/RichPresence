@@ -33,7 +33,7 @@ $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
 # built-in apps that custom statuses can borrow when the user hasn't made their own Discord app (one card each)
 $CustomPoolIds  = @('1553178514365358100', '1553247468957990943')
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
-$AppVersion   = '1.3.0'     # build.ps1 reads this; bump it for every release
+$AppVersion   = '1.4.0'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -46,6 +46,10 @@ function New-DefaultSettings {
         show_lyrics            = $true
         show_album_art         = $true
         show_current_app       = $true
+        show_watching          = $true      # Netflix, Hulu, Disney+, ... playing in a browser or their Windows app
+        show_watch_title       = $true      # ...with the show/movie name
+        show_watch_poster      = $true      # ...and its poster (looked up on TVMaze / Cinemeta)
+        show_watch_casual      = $true      # also YouTube and Twitch
         disabled_games         = @()     # game ids switched off in the library
         extra_folders          = @()     # folders whose sub-folders are games
         custom_games           = @()     # [{name, exe}] added by hand
@@ -295,6 +299,10 @@ $Engine = {
     $ShowLyrics = [bool]$S.show_lyrics
     $ShowArt    = [bool]$S.show_album_art
     $ShowApps   = [bool]$S.show_current_app
+    $ShowWatching   = [bool]$S.show_watching
+    $ShowWatchTitle = [bool]$S.show_watch_title
+    $ShowPoster     = [bool]$S.show_watch_poster
+    $ShowCasual     = [bool]$S.show_watch_casual
     $OfficialToDiscord = [bool]$S.official_to_discord
     $OfficialDelayMin  = [double]$(if ($null -ne $S.official_delay_minutes) { $S.official_delay_minutes } else { 2 })
     foreach ($pair in @(@('game', $GameId), @('music', $MusicId), @('app', $AppId))) {
@@ -439,6 +447,175 @@ public static class RPFG {
         return $script:GenshinInfo
     }
 
+    # ---------------------------------------------------------------- streaming (Netflix, Hulu, ... in a browser or their app)
+    # The page tells the browser what's playing (Media Session), and Windows passes that on to every app, the same
+    # way it does for Apple Music. The site is recognised from that info or from the browser's window titles;
+    # the poster is looked up on TVMaze (shows) or iTunes (movies). Nothing is read from inside the page itself.
+    if (-not ('RPWin' -as [type])) {
+        Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class RPWin {
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
+    // "pid<TAB>title" for every visible top-level window that has a title
+    public static string[] Visible() {
+        var list = new List<string>();
+        EnumWindows((h, l) => {
+            if (!IsWindowVisible(h)) return true;
+            int len = GetWindowTextLength(h);
+            if (len <= 0) return true;
+            var sb = new StringBuilder(len + 1);
+            GetWindowText(h, sb, sb.Capacity);
+            int pid; GetWindowThreadProcessId(h, out pid);
+            list.Add(pid + "\t" + sb.ToString());
+            return true;
+        }, IntPtr.Zero);
+        return list.ToArray();
+    }
+}
+"@
+    }
+    # Mark = how the site names itself in a tab title; App = its Windows app's id; Casual = YouTube/Twitch;
+    # Id = a Discord app made for that service (its own card, title and logo). Without one, the app card is used.
+    $Services = @(
+        @{ Name = 'Netflix';     Domain = 'netflix.com';       Mark = 'Netflix';                 App = 'Netflix'; Id = '1543308009571225711' }
+        @{ Name = 'Hulu';        Domain = 'hulu.com';          Mark = 'Hulu';                    App = 'Hulu' }
+        @{ Name = 'Disney+';     Domain = 'disneyplus.com';    Mark = 'Disney\+';                App = 'Disney' }
+        @{ Name = 'Prime Video'; Domain = 'primevideo.com';    Mark = 'Prime Video|Amazon\.com'; App = 'PrimeVideo|AmazonVideo' }
+        @{ Name = 'Max';         Domain = 'max.com';           Mark = 'HBO Max|Max';             App = 'HBOMax|WarnerBros' }
+        @{ Name = 'Crunchyroll'; Domain = 'crunchyroll.com';   Mark = 'Crunchyroll';             App = 'Crunchyroll' }
+        @{ Name = 'Paramount+';  Domain = 'paramountplus.com'; Mark = 'Paramount\+';             App = 'Paramount' }
+        @{ Name = 'Peacock';     Domain = 'peacocktv.com';     Mark = 'Peacock';                 App = 'Peacock' }
+        @{ Name = 'Apple TV+';   Domain = 'tv.apple.com';      Mark = 'Apple TV\+?';             App = 'AppleTV' }
+        @{ Name = 'Plex';        Domain = 'plex.tv';           Mark = 'Plex';                    App = 'Plex' }
+        @{ Name = 'YouTube';     Domain = 'youtube.com';       Mark = 'YouTube';                 App = 'YouTube'; Casual = $true }
+        @{ Name = 'Twitch';      Domain = 'twitch.tv';         Mark = 'Twitch';                  App = 'Twitch';  Casual = $true }
+    )
+    $BrowserAum   = 'chrome|msedge|firefox|308046B0AF4A39CB|brave|opera|vivaldi'
+    $BrowserProcs = 'chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi'
+    $Dashes = "$([char]0x2022)$([char]0x2013)$([char]0x2014)"     # bullet, en dash, em dash (kept out of the file so it stays ASCII)
+    $Sep = "[|${Dashes}:-]"
+    $BrowserSuffix = "(?i)\s[${Dashes}-]\s(Google Chrome|Mozilla Firefox|Brave|Opera|Vivaldi|Microsoft\W{0,3}Edge)$"
+
+    # "Watch The Bear | Hulu - Google Chrome" -> Hulu, "The Bear". The site's name has to be its own piece of
+    # the title (start or end, next to a separator), so "Mad Max - Wikipedia" isn't Max.
+    function Find-Service($text) {
+        $text = "$text".Trim()
+        if (-not $text) { return $null }
+        foreach ($sv in $Services) {
+            if ($sv.Casual -and -not $ShowCasual) { continue }
+            $m = [regex]::Match($text, "(?i)(?<=^|\s$Sep\s*)($($sv.Mark))(?=(\s+and \d+ more pages?)?(\s*$Sep\s|\s*$Sep?$))")
+            if (-not $m.Success) { continue }
+            $before = $text.Substring(0, $m.Index); $after = $text.Substring($m.Index + $m.Length)
+            $clean = if ($before.Trim(" |:-$([char]0x2022)$([char]0x2013)$([char]0x2014)")) { $before } else { $after -replace $BrowserSuffix, '' }
+            $clean = $clean -replace '\s+and \d+ more pages?.*$', ''
+            $clean = $clean.Trim(" |:-$([char]0x2022)$([char]0x2013)$([char]0x2014)") -replace '(?i)^(watch|stream)\s+', '' -replace '(?i)\s+online$', ''
+            return [pscustomobject]@{ Svc = $sv; Clean = $clean.Trim() }
+        }
+        $null
+    }
+    function Test-Host($v) { "$v" -match '^[\w-]+(\.[\w-]+)+$' }
+    function Get-BrowserTitles {
+        $pids = @{}
+        foreach ($p in @(Get-Process -Name $BrowserProcs -ErrorAction SilentlyContinue)) { $pids[$p.Id] = $true }
+        if (-not $pids.Count) { return @() }
+        @([RPWin]::Visible() | ForEach-Object {
+            $i = $_.IndexOf("`t")
+            if ($i -gt 0 -and $pids.ContainsKey([int]$_.Substring(0, $i))) { $_.Substring($i + 1) }
+        })
+    }
+    function Find-Watching {
+        $mgr = Await ($SmtcType::RequestAsync()) $SmtcType
+        $titles = $null; $found = @()
+        foreach ($s in @($mgr.GetSessions())) {
+            $aum = "$($s.SourceAppUserModelId)"
+            if ($aum -match 'AppleMusic|AppleInc|Spotify') { continue }
+            if ("$($s.GetPlaybackInfo().PlaybackStatus)" -ne 'Playing') { continue }
+            $sv = $null; $winClean = ''
+            if ($aum -notmatch $BrowserAum) {
+                $sv = $Services | Where-Object { $aum -match $_.App -and ($ShowCasual -or -not $_.Casual) } | Select-Object -First 1
+                if (-not $sv) { continue }
+            }
+            $props = Await ($s.TryGetMediaPropertiesAsync()) $PropsType
+            $mt = "$($props.Title)".Trim(); $ma = "$($props.Artist)".Trim()
+            $inTitle = Find-Service $mt
+            if (-not $sv) {
+                # without its own info the browser reports the tab title and the site ("www.netflix.com")
+                foreach ($x in $Services) {
+                    if (($ShowCasual -or -not $x.Casual) -and (Test-Host $ma) -and $ma -match "(^|\.)$([regex]::Escape($x.Domain))$") { $sv = $x; break }
+                }
+            }
+            if (-not $sv -and $inTitle) { $sv = $inTitle.Svc }
+            if (-not $sv) {
+                # otherwise look at the browser's windows: one showing the same title is the best match
+                if ($null -eq $titles) { $titles = @(Get-BrowserTitles) }
+                $hit = $null
+                if ($mt.Length -ge 3) { foreach ($t in $titles) { if ($t.IndexOf($mt, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = Find-Service $t; if ($hit) { break } } } }
+                if (-not $hit) { foreach ($t in $titles) { $hit = Find-Service $t; if ($hit) { break } } }
+                if (-not $hit) { continue }
+                $sv = $hit.Svc; $winClean = $hit.Clean
+            }
+            $show = ''
+            if ($inTitle -and $inTitle.Svc.Name -eq $sv.Name) { $show = $inTitle.Clean }
+            elseif ($mt -and -not (Test-Host $mt) -and $mt -ne $sv.Name) { $show = $mt }
+            if (-not $show) { $show = $winClean }
+            $sub = if ($ma -and -not (Test-Host $ma) -and $ma -ne $show -and $ma -ne $sv.Name) { $ma } else { '' }
+            $tl = $s.GetTimelineProperties()
+            $dur = ($tl.EndTime.TotalSeconds - $tl.StartTime.TotalSeconds); $pos = ($tl.Position.TotalSeconds - $tl.StartTime.TotalSeconds)
+            if ($tl.LastUpdatedTime.Year -gt 1) { $pos += ([DateTimeOffset]::Now - $tl.LastUpdatedTime).TotalSeconds }
+            $found += [pscustomobject]@{ Svc = $sv; Show = $show; Sub = $sub; Dur = $dur; Pos = $pos }
+        }
+        # a streaming service beats YouTube/Twitch when both are playing
+        @($found | Sort-Object { [bool]$_.Svc.Casual }) | Select-Object -First 1
+    }
+
+    # the poster: TVMaze knows TV shows, Cinemeta (Stremio's public catalog) knows movies. Only accept a
+    # result whose name matches the start of what's playing ("The Bear Season 2" -> "The Bear").
+    $PosterCache = @{}
+    function Test-SameTitle($a, $b) {
+        $na = Norm $a; $nb = Norm $b
+        $na.Length -ge 3 -and $nb.Length -ge 3 -and ($na.StartsWith($nb) -or $nb.StartsWith($na))
+    }
+    function Get-Poster($show, $sub) {
+        if (-not $ShowPoster) { return $null }
+        $q = "$show".Trim()
+        if ($q.Length -lt 2) { return $null }
+        if ($PosterCache.ContainsKey($q)) { return $PosterCache[$q] }
+        $url = $null
+        $tries = @($q, ($q -split "\s$Sep\s|:\s")[0].Trim(), "$sub".Trim()) | Where-Object { $_.Length -ge 2 } | Select-Object -Unique
+        foreach ($t in $tries) {
+            try {
+                $r = Invoke-RestMethod -Uri "https://api.tvmaze.com/singlesearch/shows?q=$([uri]::EscapeDataString($t))" -TimeoutSec 8
+                if ($r.image -and (Test-SameTitle $t $r.name)) { $url = "$(if ($r.image.original) { $r.image.original } else { $r.image.medium })" }
+            } catch {}
+            if ($url) { break }
+        }
+        # only then movies, and never for something that's clearly an episode
+        if (-not $url -and "$show $sub" -notmatch '(?i)\b(season|episode|ep\.?\s*\d|s\d+\s*:?\s*e\d+)') {
+            foreach ($t in $tries) {
+                try {
+                    $r = Invoke-RestMethod -Uri "https://v3-cinemeta.strem.io/catalog/movie/top/search=$([uri]::EscapeDataString($t)).json" -Headers @{ 'User-Agent' = 'RichPresence (personal use)' } -TimeoutSec 8
+                    foreach ($m in @($r.metas | Select-Object -First 3)) {
+                        if ($m.poster -and (Test-SameTitle $t $m.name)) { $url = "$($m.poster)"; break }
+                    }
+                } catch {}
+                if ($url) { break }
+            }
+        }
+        if ($url -and $url.Length -gt 256) { $url = $null }
+        $PosterCache[$q] = $url
+        $url
+    }
+    function Norm($n) { ("$n".ToLower() -replace '[^a-z0-9]', '') }
+    $script:WatchKey = $null; $script:WatchStart = 0
+
     # ---------------------------------------------------------------- game activity
     function Get-GameStartMs($g, $proc) {
         $ms = $null
@@ -515,6 +692,7 @@ public static class RPFG {
 
     $ConnMusic = New-Conn $MusicId 'music'
     $ConnApp   = New-Conn $AppId   'app'
+    $ConnWatch = $null                    # a streaming service's own Discord app, while it plays
     $GameConns = @{}     # discord app id -> connection (one card per game)
 
     function Update-GameCards($running) {
@@ -698,7 +876,7 @@ public static class RPFG {
         try {
             if (-not (Test-DiscordRunning)) {
                 $Sync.Status = 'Waiting for Discord...'
-                Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
+                Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns; if ($ConnWatch) { Close-Discord $ConnWatch; $ConnWatch = $null }
                 foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }; $GameConns = @{}
                 Nap 8; continue
             }
@@ -780,9 +958,47 @@ public static class RPFG {
                 Close-Discord $ConnMusic
             }
 
-            # ================= CARD 3: the app you're using =================
-            $appShown = $false
-            if ($ShowApps -and (Connect-Discord $ConnApp)) {
+            # ================= CARD 3: what you're watching, otherwise the app you're using =================
+            $appShown = $false; $watch = $null; $watchShown = $false
+            if ($ShowWatching) { try { $watch = Find-Watching } catch { $watch = $null } }
+            # a service with its own Discord app gets its own card; the others take over the app card
+            $watchConn = $null
+            if ($watch -and $watch.Svc.Id) {
+                if ($ConnWatch -and $ConnWatch.ClientId -ne $watch.Svc.Id) { Clear-Card $ConnWatch; Close-Discord $ConnWatch; $ConnWatch = $null }
+                if (-not $ConnWatch) { $ConnWatch = New-Conn $watch.Svc.Id 'watching' }
+                $watchConn = $ConnWatch
+            } elseif ($watch) { $watchConn = $ConnApp }
+            if ($ConnWatch -and $watchConn -ne $ConnWatch) { Clear-Card $ConnWatch; Close-Discord $ConnWatch; $ConnWatch = $null }
+
+            if ($watchConn -and (Connect-Discord $watchConn)) {
+                $sv = $watch.Svc
+                $show = if ($ShowWatchTitle) { $watch.Show } else { '' }
+                $wkey = "watch|$($sv.Name)|$($watch.Show)"
+                if ($wkey -ne $script:WatchKey) { $script:WatchKey = $wkey; $script:WatchStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+                $id = "$wkey|$($watch.Sub)"
+                $changed = ($watchConn.Id -ne $id)
+                if ($changed -or (([datetime]::UtcNow - $watchConn.SentUtc).TotalSeconds -ge 20)) {
+                    $logo = "https://www.google.com/s2/favicons?sz=128&domain=$($sv.Domain)"
+                    $poster = if ($show -and -not $sv.Casual) { Get-Poster $show $watch.Sub } else { $null }
+                    $act = @{ type = 3; name = $sv.Name }
+                    # the poster big with the service logo small; a service's own app shows its own icon when there's no poster
+                    if ($poster) { $act.assets = @{ large_image = $poster; large_text = $(if ($show.Length -ge 2) { $show } else { $sv.Name }); small_image = $logo; small_text = $sv.Name } }
+                    elseif (-not $sv.Id) { $act.assets = @{ large_image = $logo; large_text = $sv.Name } }
+                    if ($show.Length -ge 2) { $act.details = Limit-Text $show 128 }
+                    if ($ShowWatchTitle -and $watch.Sub.Length -ge 2) { $act.state = Limit-Text $watch.Sub 128 }
+                    # a real progress bar when the site reports where you are, otherwise time since it started
+                    if ($watch.Dur -gt 60 -and $watch.Pos -ge 0 -and $watch.Pos -le $watch.Dur) {
+                        $st = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [int64]($watch.Pos * 1000)
+                        $act.timestamps = @{ start = $st; end = $st + [int64]($watch.Dur * 1000) }
+                    } else { $act.timestamps = @{ start = $script:WatchStart } }
+                    if ((Push-Card $watchConn $act $id $changed) -and $changed) { Log ("Watching: $($sv.Name)" + $(if ($show) { " - $show" } else { '' })) }
+                }
+                $watchShown = $true
+            }
+            if (-not $watch) { $script:WatchKey = $null }
+
+            if ($watchShown -and $watchConn -eq $ConnApp) { }     # the app card is busy showing what you watch
+            elseif ($ShowApps -and (Connect-Discord $ConnApp)) {
                 $fg = Get-Foreground
                 if ($fg) {
                     $lastValidAppUtc = [datetime]::UtcNow
@@ -801,7 +1017,7 @@ public static class RPFG {
                     $appShown = $true; $Sync.AppLabel = $fg.Label
                 }
                 # ignored window (Discord itself, or the game): keep the last app for a few minutes
-                elseif ($ConnApp.Id -and $lastValidAppUtc -and (([datetime]::UtcNow - $lastValidAppUtc).TotalSeconds -lt 300)) { $appShown = $true }
+                elseif ("$($ConnApp.Id)" -like 'app|*' -and $lastValidAppUtc -and (([datetime]::UtcNow - $lastValidAppUtc).TotalSeconds -lt 300)) { $appShown = $true }
                 if (-not $appShown) { Clear-Card $ConnApp }
             } elseif (-not $ShowApps) {
                 Clear-Card $ConnApp; Close-Discord $ConnApp
@@ -813,6 +1029,7 @@ public static class RPFG {
             $parts = @()
             if ($running.Count) { $parts += "Playing $($running[0].G.name)" }
             if ($musicActive)   { $parts += "Listening: $title" }
+            if ($watchShown)    { $parts += "Watching $($watch.Svc.Name)" }
             if ($appShown -and -not $running.Count) { $parts += "App: $($Sync.AppLabel)" }
             if ($script:CustomShown) { $parts += $(if ($script:CustomShown -gt 1) { "$($script:CustomShown) custom statuses" } else { 'Custom status' }) }
             $Sync.Status = if ($parts.Count) { $parts -join '  |  ' } else { 'Watching for games' }
@@ -820,7 +1037,7 @@ public static class RPFG {
         }
         catch {
             Log "Error: $($_.Exception.Message)"
-            Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
+            Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns; if ($ConnWatch) { Close-Discord $ConnWatch; $ConnWatch = $null }
             foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }; $GameConns = @{}
             Nap 5
         }
@@ -829,7 +1046,8 @@ public static class RPFG {
     # stopped: remove our cards
     Clear-Card $ConnMusic; Clear-Card $ConnApp
     foreach ($k in @($CustomConns.Keys)) { Clear-Card $CustomConns[$k] }
-    Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns
+    if ($ConnWatch) { Clear-Card $ConnWatch }
+    Close-Discord $ConnMusic; Close-Discord $ConnApp; Close-CustomConns; if ($ConnWatch) { Close-Discord $ConnWatch; $ConnWatch = $null }
     foreach ($k in @($GameConns.Keys)) { Close-Discord $GameConns[$k] }
     Log "Presence stopped."
 }
@@ -1027,14 +1245,20 @@ $flow.BringToFront()
 $emptyLbl = New-Ctl System.Windows.Forms.Label $pGames @{ Text = 'Looking for your games...'; ForeColor = $cDim; Font = $fBold; Dock = 'Top'; Height = 40; Visible = $false }
 
 # ---- Music & Apps page
-$mTitle = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = 'Music & apps'; UseMnemonic = $false; Font = $fTitle; Location = (Pt 20 20); AutoSize = $true }
-$mNote = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = "These show as their own Discord cards next to your game (up to three at once).`nApple Music: use the Microsoft Store app."; ForeColor = $cDim; Location = (Pt 22 58); AutoSize = $true }
+$mTitle = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = 'Music, video & apps'; UseMnemonic = $false; Font = $fTitle; Location = (Pt 20 20); AutoSize = $true }
+$mNote = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = "These show as their own Discord cards next to your game. Apple Music: use the Microsoft Store app.`nWatching works in Chrome, Edge, Firefox, Brave, Opera and the services' Windows apps. Netflix gets its own card; the others use the app card while they play."; ForeColor = $cDim; Location = (Pt 22 58); AutoSize = $true }
 function New-Check($parent, $text, $y) { New-Ctl System.Windows.Forms.CheckBox $parent @{ Text = $text; Location = (Pt 24 $y); AutoSize = $true; ForeColor = $cText } }
 $chkMusic  = New-Check $pMusic 'Show what I''m playing on Apple Music' 110
 $chkLyrics = New-Check $pMusic 'Show the current lyric line' 138
 $chkArt    = New-Check $pMusic 'Show album art' 166
 $chkApps   = New-Check $pMusic 'Show the app I''m using when nothing else is showing' 194
-$btnMusicSave = New-Ctl System.Windows.Forms.Button $pMusic @{ Text = 'Apply'; Location = (Pt 24 250); Size = (Sz 100 32) }
+$chkWatch  = New-Check $pMusic 'Show what I''m watching (Netflix, Hulu, Disney+, Prime Video, Max and more)' 230
+$chkWatchTitle  = New-Check $pMusic 'Show the show or movie name' 258
+$chkWatchPoster = New-Check $pMusic 'Show its poster (looked up on TVMaze and Cinemeta)' 286
+$chkWatchCasual = New-Check $pMusic 'Also YouTube and Twitch' 314
+foreach ($c in $chkWatchTitle, $chkWatchPoster, $chkWatchCasual) { $c.Left = 44 }
+$chkWatch.add_CheckedChanged({ foreach ($c in $chkWatchTitle, $chkWatchPoster, $chkWatchCasual) { $c.Enabled = $chkWatch.Checked } })
+$btnMusicSave = New-Ctl System.Windows.Forms.Button $pMusic @{ Text = 'Apply'; Location = (Pt 24 360); Size = (Sz 100 32) }
 Style-Button $btnMusicSave $true
 
 # ---- Custom status page: a list of your own cards on the left, the selected one's editor on the right
@@ -1117,6 +1341,9 @@ function Apply-ToUi {
     $txtFolders.Text = (@($Settings.extra_folders) -join [Environment]::NewLine)
     $chkMusic.Checked = [bool]$Settings.show_music; $chkLyrics.Checked = [bool]$Settings.show_lyrics
     $chkArt.Checked = [bool]$Settings.show_album_art; $chkApps.Checked = [bool]$Settings.show_current_app
+    $chkWatch.Checked = [bool]$Settings.show_watching; $chkWatchTitle.Checked = [bool]$Settings.show_watch_title
+    $chkWatchPoster.Checked = [bool]$Settings.show_watch_poster; $chkWatchCasual.Checked = [bool]$Settings.show_watch_casual
+    foreach ($c in $chkWatchTitle, $chkWatchPoster, $chkWatchCasual) { $c.Enabled = $chkWatch.Checked }
     $chkAutoStart.Checked = [bool]$Settings.start_presence_on_open; $chkExit.Checked = [bool]$Settings.exit_when_game_closes
     $chkTray.Checked = [bool]$Settings.close_to_tray; $chkWin.Checked = [bool]$Settings.start_with_windows
     $chkOfficial.Checked = [bool]$Settings.official_to_discord
@@ -1127,6 +1354,8 @@ function Read-FromUi {
     $Settings.extra_folders = @($txtFolders.Text -split "`r?`n" | ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ })
     $Settings.show_music = $chkMusic.Checked; $Settings.show_lyrics = $chkLyrics.Checked
     $Settings.show_album_art = $chkArt.Checked; $Settings.show_current_app = $chkApps.Checked
+    $Settings.show_watching = $chkWatch.Checked; $Settings.show_watch_title = $chkWatchTitle.Checked
+    $Settings.show_watch_poster = $chkWatchPoster.Checked; $Settings.show_watch_casual = $chkWatchCasual.Checked
     $Settings.start_presence_on_open = $chkAutoStart.Checked; $Settings.exit_when_game_closes = $chkExit.Checked
     $Settings.close_to_tray = $chkTray.Checked; $Settings.start_with_windows = $chkWin.Checked
     $Settings.official_to_discord = $chkOfficial.Checked
