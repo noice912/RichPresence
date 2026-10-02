@@ -1,3 +1,11 @@
+## RichPresence 1.4.1
+
+### Fixes
+- Watching: the app card ("Microsoft Edge") no longer shows next to the Watching card
+- Watching: pages that only say "Watch" (Hulu, Netflix) no longer show "Watch" as the title or a wrong poster
+- Posters only match a show whose name is the start of the title (no more "Watch" -> "Watch the Skies")
+- Browser tab titles no longer show "and 3 more pages - Personal - Microsoft Edge", and Edge's name is no longer garbled
+
 ## RichPresence 1.4.0
 
 ### Watching (Windows)

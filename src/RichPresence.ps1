@@ -33,7 +33,7 @@ $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
 # built-in apps that custom statuses can borrow when the user hasn't made their own Discord app (one card each)
 $CustomPoolIds  = @('1553178514365358100', '1553247468957990943')
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
-$AppVersion   = '1.4.0'     # build.ps1 reads this; bump it for every release
+$AppVersion   = '1.4.1'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -387,7 +387,7 @@ using System.Runtime.InteropServices;
 public static class RPFG {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
-    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
     public static string Title(IntPtr h) {
         int len = GetWindowTextLength(h);
@@ -566,6 +566,8 @@ public static class RPWin {
             if ($inTitle -and $inTitle.Svc.Name -eq $sv.Name) { $show = $inTitle.Clean }
             elseif ($mt -and -not (Test-Host $mt) -and $mt -ne $sv.Name) { $show = $mt }
             if (-not $show) { $show = $winClean }
+            # player pages often only say "Hulu | Watch": that's not a show name
+            if ($show -match '^(?i)(watch|watching|home|browse|player|play|video|videos|movie|movies|tv|series|shows?|search|details|stream)$') { $show = '' }
             $sub = if ($ma -and -not (Test-Host $ma) -and $ma -ne $show -and $ma -ne $sv.Name) { $ma } else { '' }
             $tl = $s.GetTimelineProperties()
             $dur = ($tl.EndTime.TotalSeconds - $tl.StartTime.TotalSeconds); $pos = ($tl.Position.TotalSeconds - $tl.StartTime.TotalSeconds)
@@ -577,11 +579,12 @@ public static class RPWin {
     }
 
     # the poster: TVMaze knows TV shows, Cinemeta (Stremio's public catalog) knows movies. Only accept a
-    # result whose name matches the start of what's playing ("The Bear Season 2" -> "The Bear").
+    # result whose name is the start of what's playing ("The Bear Season 2" -> "The Bear"), never a longer
+    # name that merely starts with it ("Watch" -> "Watch the Skies").
     $PosterCache = @{}
-    function Test-SameTitle($a, $b) {
-        $na = Norm $a; $nb = Norm $b
-        $na.Length -ge 3 -and $nb.Length -ge 3 -and ($na.StartsWith($nb) -or $nb.StartsWith($na))
+    function Test-SameTitle($playing, $found) {
+        $np = Norm $playing; $nf = Norm $found
+        $np.Length -ge 3 -and $nf.Length -ge 3 -and $np.StartsWith($nf)
     }
     function Get-Poster($show, $sub) {
         if (-not $ShowPoster) { return $null }
@@ -1012,7 +1015,8 @@ public static class RPWin {
             }
             if (-not $watch) { $script:WatchKey = $null }
 
-            if ($watchShown -and $watchConn -eq $ConnApp) { }     # the app card is busy showing what you watch
+            # while something is being watched the app card stays away (it would just say "Microsoft Edge")
+            if ($watchShown) { if ($watchConn -ne $ConnApp) { Clear-Card $ConnApp } }
             elseif ($ShowApps -and (Connect-Discord $ConnApp)) {
                 $fg = Get-Foreground
                 if ($fg) {
@@ -1023,7 +1027,9 @@ public static class RPWin {
                     $isNew = ($ConnApp.Id -ne $id) -and ($settled -ge 3)
                     if ($isNew -or ($ConnApp.Id -eq $id) -or (([datetime]::UtcNow - $ConnApp.SentUtc).TotalSeconds -ge 20)) {
                         if ($isNew -or -not $appStartMs) { $appStartMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
-                        $detail = $fg.Title; if ($detail.Length -gt 128) { $detail = $detail.Substring(0, 125) + '...' }
+                        # browsers: just the tab's title, without "and 3 more pages - Personal - Microsoft Edge"
+                        $detail = ($fg.Title -replace $BrowserSuffix, '') -replace '\s+and \d+ more pages?.*$', ''
+                        if ($detail.Length -gt 128) { $detail = $detail.Substring(0, 125) + '...' }
                         $activity = @{ type = 0; name = $fg.Label; timestamps = @{ start = $appStartMs } }
                         if ($detail -and $detail -ne $fg.Label) { $activity.details = $detail }
                         $activity.assets = @{ large_image = $(if ($fg.Icon) { $fg.Icon } else { $GENERIC_APP_ICON }); large_text = $fg.Label }

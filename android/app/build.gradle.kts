@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.noice912.richpresence"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.4.0"
+        versionCode = 8
+        versionName = "1.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("long", "DISCORD_APP_ID", "${discordAppId}L")
         manifestPlaceholders["discordAppId"] = discordAppId
