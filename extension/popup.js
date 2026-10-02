@@ -1,4 +1,4 @@
-// Shows whether the RichPresence app is running and what it last heard from Netflix/Hulu.
+// Shows whether the RichPresence app is running and what it last heard from the streaming sites.
 const conn = document.getElementById('conn');
 const connText = document.getElementById('connText');
 const now = document.getElementById('now');
@@ -11,7 +11,7 @@ fetch('http://127.0.0.1:47610/status', { headers: { 'X-RichPresence': '1' } })
     conn.className = 'on';
     connText.textContent = `Connected to RichPresence ${s.version || ''}`.trim();
     const list = (s.watching || []).filter(w => w.title || w.playing);
-    if (!list.length) { now.appendChild(line('dim card', 'Play something on Netflix or Hulu.')); return; }
+    if (!list.length) { now.appendChild(line('dim card', 'Play something on Netflix, Hulu, Disney+, Prime Video, Max, Crunchyroll, Paramount+, Peacock, Apple TV+, Plex, YouTube or Twitch.')); return; }
     for (const w of list) {
       const c = line('card', '');
       c.appendChild(line('svc', `${w.service} - ${w.playing ? 'playing' : 'paused'}`));
@@ -23,5 +23,5 @@ fetch('http://127.0.0.1:47610/status', { headers: { 'X-RichPresence': '1' } })
   .catch(() => {
     conn.className = 'off';
     connText.textContent = "RichPresence isn't running on this PC.";
-    now.appendChild(line('dim card', 'Open RichPresence (version 1.5.0 or newer) and start the presence.'));
+    now.appendChild(line('dim card', 'Open RichPresence (version 1.6.0 or newer) and start the presence.'));
   });

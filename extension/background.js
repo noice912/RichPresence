@@ -1,4 +1,4 @@
-// Passes what the Netflix/Hulu tabs report to the RichPresence app on this PC (127.0.0.1 only).
+// Passes what the streaming-site tabs report to the RichPresence app on this PC (127.0.0.1 only).
 const APP = 'http://127.0.0.1:47610';
 
 chrome.runtime.onMessage.addListener((msg) => {

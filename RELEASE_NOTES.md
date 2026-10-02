@@ -1,3 +1,17 @@
+## RichPresence 1.6.0
+
+### The browser extension now covers every streaming service
+`RichPresence-extension.zip` (version 1.1.0) now reads what you're watching on **Netflix, Hulu, Disney+,
+Prime Video (including amazon.com), Max, Crunchyroll, Paramount+, Peacock, Apple TV+, Plex, YouTube
+and Twitch**:
+- the show and episode from each site's player, falling back to the page's media info and its tab title
+- an exact progress bar, and the card goes away as soon as you pause
+- Crunchyroll's player frame reports play/pause to the page around it
+- YouTube and Twitch cards get the video's thumbnail
+
+**Update the extension:** unzip the new version over your old extension folder, then click the reload
+icon on it in `edge://extensions` (or `chrome://extensions`). New install: see the steps below.
+
 ## RichPresence 1.5.0
 
 ### Browser extension for Netflix and Hulu

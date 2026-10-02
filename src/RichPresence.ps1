@@ -33,7 +33,7 @@ $DefaultAppId   = '1544831111128154213'   # "Playing" - current-app card
 # built-in apps that custom statuses can borrow when the user hasn't made their own Discord app (one card each)
 $CustomPoolIds  = @('1553178514365358100', '1553247468957990943')
 $RepoUrl      = 'https://github.com/noice912/RichPresence'
-$AppVersion   = '1.5.0'     # build.ps1 reads this; bump it for every release
+$AppVersion   = '1.6.0'     # build.ps1 reads this; bump it for every release
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
 # ===========================================================================
@@ -539,11 +539,13 @@ public static class RPWin {
     }
     function Find-Watching {
         # the browser extension reads the player itself, so it knows best: show, episode, exact position
-        foreach ($sv in $Services) {
+        # (a streaming service before YouTube/Twitch, like below)
+        foreach ($sv in @($Services | Sort-Object { [bool]$_.Casual })) {
+            if ($sv.Casual -and -not $ShowCasual) { continue }
             $e = Get-ExtReport $sv.Name
             if ($e -and $e.Playing) {
                 $pos = $e.Pos; if ($e.Dur -gt 0) { $pos = [math]::Min($e.Dur, $pos + ([datetime]::UtcNow - $e.At).TotalSeconds) }
-                return [pscustomobject]@{ Svc = $sv; Show = $e.Title; Sub = $e.Episode; Dur = $e.Dur; Pos = $pos }
+                return [pscustomobject]@{ Svc = $sv; Show = $e.Title; Sub = $e.Episode; Dur = $e.Dur; Pos = $pos; Image = $e.Image }
             }
         }
         $mgr = Await ($SmtcType::RequestAsync()) $SmtcType
@@ -1014,7 +1016,9 @@ public static class RPWin {
                 $changed = ($watchConn.Id -ne $id)
                 if ($changed -or (([datetime]::UtcNow - $watchConn.SentUtc).TotalSeconds -ge 20)) {
                     $logo = Get-ServiceLogo $sv
-                    $poster = if ($show -and -not $sv.Casual) { Get-Poster $show $watch.Sub } else { $null }
+                    # the video's own thumbnail (YouTube/Twitch, from the extension), else a poster lookup
+                    $poster = if ($ShowPoster -and $watch.Image) { $watch.Image }
+                              elseif ($show -and -not $sv.Casual) { Get-Poster $show $watch.Sub } else { $null }
                     $act = @{ type = 3; name = $sv.Name }
                     # the poster big with the service logo small; a service's own app shows its own icon when there's no poster
                     if ($poster) { $act.assets = @{ large_image = $poster; large_text = $(if ($show.Length -ge 2) { $show } else { $sv.Name }); small_image = $logo; small_text = $sv.Name } }
@@ -1133,6 +1137,8 @@ $Updater = {
 $BridgePort = 47610
 $Bridge = {
     param($Sync, $Port, $Version)
+    # the services the extension may report (same names as the engine's streaming table)
+    $ExtServices = 'Netflix', 'Hulu', 'Disney+', 'Prime Video', 'Max', 'Crunchyroll', 'Paramount+', 'Peacock', 'Apple TV+', 'Plex', 'YouTube', 'Twitch'
     $ErrorActionPreference = 'Stop'
     function Log($m) { $Sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m)) }
     function Send-Response($stream, [int]$code, [string]$status, [string]$body, [string]$origin) {
@@ -1190,9 +1196,12 @@ $Bridge = {
                     while ($have -lt $len) { $n = $stream.Read($body, $have, $len - $have); if ($n -le 0) { break }; $have += $n }
                     $j = [Text.Encoding]::UTF8.GetString($body, 0, $have) | ConvertFrom-Json
                     $svc = "$($j.service)"
-                    if ($svc -notin 'Netflix', 'Hulu') { Send-Response $stream 400 'Bad Request' '' $allow; continue }
+                    if ($svc -notin $ExtServices) { Send-Response $stream 400 'Bad Request' '' $allow; continue }
                     $pos = 0.0; $dur = 0.0; [void][double]::TryParse("$($j.position)", [ref]$pos); [void][double]::TryParse("$($j.duration)", [ref]$dur)
-                    $new = @{ Title = (Clip $j.title 128); Episode = (Clip $j.episode 128); Playing = [bool]$j.playing; Pos = $pos; Dur = $dur; At = [datetime]::UtcNow }
+                    # a thumbnail is only taken from the sites' own image servers
+                    $img = "$($j.image)".Trim()
+                    if ($img -notmatch '^https://(i\.ytimg\.com/vi/[\w-]{6,20}/\w+\.jpg|static-cdn\.jtvnw\.net/previews-ttv/live_user_\w{3,25}-\d+x\d+\.jpg)$') { $img = '' }
+                    $new = @{ Title = (Clip $j.title 128); Episode = (Clip $j.episode 128); Image = $img; Playing = [bool]$j.playing; Pos = $pos; Dur = $dur; At = [datetime]::UtcNow }
                     $old = $Sync.Ext[$svc]
                     if ($new.Playing -and $new.Title -and (-not $old -or $old.Title -ne $new.Title -or $old.Episode -ne $new.Episode)) {
                         Log ("Browser extension: {0} - {1}{2}" -f $svc, $new.Title, $(if ($new.Episode) { " - $($new.Episode)" } else { '' }))
