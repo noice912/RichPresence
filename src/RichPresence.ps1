@@ -486,14 +486,14 @@ public static class RPWin {
     # Id = a Discord app made for that service (its own card, title and logo). Without one, the app card is used.
     $Services = @(
         @{ Name = 'Netflix';     Domain = 'netflix.com';       Mark = 'Netflix';                 App = 'Netflix'; Id = '1543308009571225711' }
-        @{ Name = 'Hulu';        Domain = 'hulu.com';          Mark = 'Hulu';                    App = 'Hulu' }
-        @{ Name = 'Disney+';     Domain = 'disneyplus.com';    Mark = 'Disney\+';                App = 'Disney' }
-        @{ Name = 'Prime Video'; Domain = 'primevideo.com';    Mark = 'Prime Video|Amazon\.com'; App = 'PrimeVideo|AmazonVideo' }
-        @{ Name = 'Max';         Domain = 'max.com';           Mark = 'HBO Max|Max';             App = 'HBOMax|WarnerBros' }
-        @{ Name = 'Crunchyroll'; Domain = 'crunchyroll.com';   Mark = 'Crunchyroll';             App = 'Crunchyroll' }
-        @{ Name = 'Paramount+';  Domain = 'paramountplus.com'; Mark = 'Paramount\+';             App = 'Paramount' }
-        @{ Name = 'Peacock';     Domain = 'peacocktv.com';     Mark = 'Peacock';                 App = 'Peacock' }
-        @{ Name = 'Apple TV+';   Domain = 'tv.apple.com';      Mark = 'Apple TV\+?';             App = 'AppleTV' }
+        @{ Name = 'Hulu';        Domain = 'hulu.com';          Mark = 'Hulu';                    App = 'Hulu';        Id = '1555409832289378314' }
+        @{ Name = 'Disney+';     Domain = 'disneyplus.com';    Mark = 'Disney\+';                App = 'Disney';      Id = '1555410530762494003' }
+        @{ Name = 'Prime Video'; Domain = 'primevideo.com';    Mark = 'Prime Video|Amazon\.com'; App = 'PrimeVideo|AmazonVideo'; Id = '1555411243207098409' }
+        @{ Name = 'Max';         Domain = 'max.com';           Mark = 'HBO Max|Max';             App = 'HBOMax|WarnerBros'; Id = '1555411619285176410' }
+        @{ Name = 'Crunchyroll'; Domain = 'crunchyroll.com';   Mark = 'Crunchyroll';             App = 'Crunchyroll'; Id = '1555411897317064837' }
+        @{ Name = 'Paramount+';  Domain = 'paramountplus.com'; Mark = 'Paramount\+';             App = 'Paramount';   Id = '1555412495521546320' }
+        @{ Name = 'Peacock';     Domain = 'peacocktv.com';     Mark = 'Peacock';                 App = 'Peacock';     Id = '1555413504956039188' }
+        @{ Name = 'Apple TV+';   Domain = 'tv.apple.com';      Mark = 'Apple TV\+?';             App = 'AppleTV';     Id = '1555413730475507812' }
         @{ Name = 'Plex';        Domain = 'plex.tv';           Mark = 'Plex';                    App = 'Plex' }
         @{ Name = 'YouTube';     Domain = 'youtube.com';       Mark = 'YouTube';                 App = 'YouTube'; Casual = $true }
         @{ Name = 'Twitch';      Domain = 'twitch.tv';         Mark = 'Twitch';                  App = 'Twitch';  Casual = $true }
@@ -615,6 +615,21 @@ public static class RPWin {
     }
     function Norm($n) { ("$n".ToLower() -replace '[^a-z0-9]', '') }
     $script:WatchKey = $null; $script:WatchStart = 0
+
+    # a service's logo: the icon uploaded to its Discord app (public info), else the website's icon
+    $LogoCache = @{}
+    function Get-ServiceLogo($sv) {
+        if ($LogoCache.ContainsKey($sv.Name)) { return $LogoCache[$sv.Name] }
+        $logo = "https://www.google.com/s2/favicons?sz=128&domain=$($sv.Domain)"
+        if ($sv.Id) {
+            try {
+                $r = Invoke-RestMethod -Uri "https://discord.com/api/v9/applications/$($sv.Id)/rpc" -Headers @{ 'User-Agent' = 'RichPresence (personal use)' } -TimeoutSec 8
+                if ("$($r.icon)" -match '^[0-9a-f]{32}$') { $logo = "https://cdn.discordapp.com/app-icons/$($sv.Id)/$($r.icon).png?size=256" }
+            } catch {}
+        }
+        $LogoCache[$sv.Name] = $logo
+        $logo
+    }
 
     # ---------------------------------------------------------------- game activity
     function Get-GameStartMs($g, $proc) {
@@ -978,7 +993,7 @@ public static class RPWin {
                 $id = "$wkey|$($watch.Sub)"
                 $changed = ($watchConn.Id -ne $id)
                 if ($changed -or (([datetime]::UtcNow - $watchConn.SentUtc).TotalSeconds -ge 20)) {
-                    $logo = "https://www.google.com/s2/favicons?sz=128&domain=$($sv.Domain)"
+                    $logo = Get-ServiceLogo $sv
                     $poster = if ($show -and -not $sv.Casual) { Get-Poster $show $watch.Sub } else { $null }
                     $act = @{ type = 3; name = $sv.Name }
                     # the poster big with the service logo small; a service's own app shows its own icon when there's no poster
@@ -1246,7 +1261,7 @@ $emptyLbl = New-Ctl System.Windows.Forms.Label $pGames @{ Text = 'Looking for yo
 
 # ---- Music & Apps page
 $mTitle = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = 'Music, video & apps'; UseMnemonic = $false; Font = $fTitle; Location = (Pt 20 20); AutoSize = $true }
-$mNote = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = "These show as their own Discord cards next to your game. Apple Music: use the Microsoft Store app.`nWatching works in Chrome, Edge, Firefox, Brave, Opera and the services' Windows apps. Netflix gets its own card; the others use the app card while they play."; ForeColor = $cDim; Location = (Pt 22 58); AutoSize = $true }
+$mNote = New-Ctl System.Windows.Forms.Label $pMusic @{ Text = "These show as their own Discord cards next to your game. Apple Music: use the Microsoft Store app.`nWatching works in Chrome, Edge, Firefox, Brave, Opera and the services' Windows apps. Each service shows as its own card with its logo (Plex, YouTube and Twitch use the app card)."; ForeColor = $cDim; Location = (Pt 22 58); AutoSize = $true }
 function New-Check($parent, $text, $y) { New-Ctl System.Windows.Forms.CheckBox $parent @{ Text = $text; Location = (Pt 24 $y); AutoSize = $true; ForeColor = $cText } }
 $chkMusic  = New-Check $pMusic 'Show what I''m playing on Apple Music' 110
 $chkLyrics = New-Check $pMusic 'Show the current lyric line' 138

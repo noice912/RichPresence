@@ -7,7 +7,7 @@ Apple TV+ and Plex**, plus YouTube and Twitch (optional):
 - shows the show's poster, looked up on TVMaze (TV) and Cinemeta (movies), with the service's logo in the corner
 - shows a progress bar when the site reports where you are
 - works in Chrome, Edge, Firefox, Brave, Opera, Vivaldi and the services' Windows apps
-- Netflix has its own Discord card with the Netflix logo; the others use the app card while something plays
+- each service has its own Discord card with its name and logo (Plex, YouTube and Twitch use the app card)
 - each part can be turned off under **Music & Apps**. It never reads the page itself, your cookies or your account.
 
 ### From 1.3.0

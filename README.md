@@ -103,7 +103,7 @@ How it knows what's playing:
 2. **The tab title.** If the site doesn't say, RichPresence recognizes it from the browser's window title, like "Watch The Bear | Hulu".
 3. **The poster.** The show name is looked up on [TVMaze](https://www.tvmaze.com) (TV shows) or [Cinemeta](https://v3-cinemeta.strem.io) (movies). A poster is only used when its name matches.
 
-It never reads the page itself, your cookies or your account. Netflix has its own Discord card with the Netflix logo. The other services use the app card while something plays. Paused videos don't show. Turn it off, or hide the show name, posters, or YouTube/Twitch, under **Music & Apps**.
+It never reads the page itself, your cookies or your account. Each service has its own Discord card with its name and logo, so it shows next to your app card. Plex, YouTube and Twitch use the app card instead. Paused videos don't show. Turn it off, or hide the show name, posters, or YouTube/Twitch, under **Music & Apps**.
 
 ## Genshin Impact stats (optional)
 
